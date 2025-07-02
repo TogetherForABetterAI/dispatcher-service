@@ -37,7 +37,7 @@ message GetBatchRequest {
 // Response containing a batch of data
 message DataBatch {
   bytes data = 1;           // serialized tensor data
-  int32 batch_id = 2;       // batch ID (renamed from batch_index)
+  int32 batch_index = 2;       
   bool is_last_batch = 3;   // indicates if this is the last batch
 }
 
