@@ -44,7 +44,7 @@ func Handle(conn net.Conn, clientID string) {
 		}
 
 		batchMsg := &protocol.BatchMessage{
-			BatchID:   int(batch.GetBatchId()),
+			BatchIndex: batch.GetBatchIndex(),
 			BatchData: []interface{}{batch.GetData()},
 			ClientID:  clientID,
 			EOF:       batch.GetIsLastBatch(),
