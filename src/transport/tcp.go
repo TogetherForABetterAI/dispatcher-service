@@ -26,6 +26,7 @@ func NewTCPServer(addr string) *TCPServer {
 func (s *TCPServer) Start() {
 	s.wg.Add(1)
 	defer s.wg.Done()
+	log.Printf("Starting the server")
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
