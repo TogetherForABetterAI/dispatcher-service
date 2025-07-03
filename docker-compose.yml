@@ -15,5 +15,4 @@ services:
       - proto-gen
     volumes:
       - ./src/pb:/app/src/pb
-    ports:
-      - "8080:8080"
+    network_mode: host
