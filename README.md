@@ -26,11 +26,9 @@
   - Data batches are serialized as JSON and sent over the TCP connection to the client.
   - The protocol supports signaling the end of the dataset (EOF) to the client.
 
-- **Use Cases:**
-  - This service is ideal for scenarios where multiple consumers (e.g., model trainers, data processors) need to stream batches of data concurrently from a central dataset provider.
 
 **Architecture Overview:**
-- TCP clients <-> [this service] <-> dataset-generator-service (gRPC Python)
+- TCP clients <-> [this service] <-> dataset-generator-service (gRPC server)
 
 ## Running the Server with Docker Compose
 
