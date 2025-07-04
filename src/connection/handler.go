@@ -10,13 +10,14 @@ import (
 	"github.com/mlops-eval/data-dispatcher-service/src/grpc"
 	"github.com/mlops-eval/data-dispatcher-service/src/pb"
 	"github.com/mlops-eval/data-dispatcher-service/src/protocol"
+	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
 )
 
 func init() {
 	godotenv.Load()
 }
 
-func Handle(conn net.Conn, clientID string) {
+func Handle(conn net.Conn, clientID string, middleware *middleware.Middleware) {
 	defer conn.Close()
 	batch_index := 0
 	address := "localhost:50051"
@@ -51,10 +52,16 @@ func Handle(conn net.Conn, clientID string) {
 			EOF:        batch.GetIsLastBatch(),
 		}
 
-		if err := protocol.EncodeBatchMessage(conn, batchMsg); err != nil {
+		batch, err := protocol.EncodeBatchMessage(conn, batchMsg); 
+		if err != nil {
 			log.Printf("error sending batch to client %s: %v", clientID, err)
 			return
 		}
+		middleware.Publish(
+			"data",
+			batch,
+			"data_exchange",
+		)
 
 		if batch.GetIsLastBatch() {
 			log.Printf("transmission to client %s completed", clientID)
