@@ -46,23 +46,18 @@ func Handle(conn net.Conn, clientID string, middleware *middleware.Middleware) {
 			return
 		}
 
-		batchMsg := &protocol.BatchMessage{
-			BatchIndex: int32(batch_index),
-			BatchData:  []interface{}{batch.GetData()},
-			ClientID:   clientID,
-			EOF:        batch.GetIsLastBatch(),
-		}
-
-		batch_bytes, err := protocol.EncodeBatchMessage(conn, batchMsg); 
+		batch_bytes, err := protocol.EncodeBatchMessage(conn, batch); 
 		if err != nil {
 			log.Printf("error sending batch to client %s: %v", clientID, err)
 			return
 		}
-		middleware.BasicSend(
-			"data",
-			batch_bytes,
-			"data_exchange",
-		)
+		for _, exchange := range [2]string{"data_exchange", "calibration_exchange"} {
+			middleware.BasicSend(
+				"data",
+				batch_bytes,
+				exchange,
+			)
+		}
 
 		if batch.GetIsLastBatch() {
 			log.Printf("transmission to client %s completed", clientID)

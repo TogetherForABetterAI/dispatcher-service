@@ -2,20 +2,17 @@
 package protocol
 
 import (
-	"encoding/json"
+	"github.com/mlops-eval/data-dispatcher-service/src/pb"
+	"google.golang.org/protobuf/proto"
 	"fmt"
 	"net"
 )
 
-func EncodeBatchMessage(conn net.Conn, msg *BatchMessage) ([]byte, error) {
-	// Convertir el struct a JSON
-	encoded, err := json.Marshal(msg)
+func EncodeBatchMessage(conn net.Conn, data_batch *pb.DataBatch) ([]byte, error) {
+	encoded, err := proto.Marshal(data_batch)
 	if err != nil {
 		return nil, fmt.Errorf("error serializing batch message: %w", err)
 	}
-
-	// Agregar newline como delimitador (opcional pero útil)
-	encoded = append(encoded, '\n')
 
 	return encoded, err
 }
