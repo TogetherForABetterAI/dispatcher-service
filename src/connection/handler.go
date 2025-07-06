@@ -11,7 +11,7 @@ import (
 	"github.com/mlops-eval/data-dispatcher-service/src/pb"
 	"github.com/mlops-eval/data-dispatcher-service/src/protocol"
 	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
-	"google.golang.org/protobuf/proto"
+
 )
 
 func init() {
@@ -46,7 +46,7 @@ func Handle(conn net.Conn, clientID string, middleware *middleware.Middleware) {
 			return
 		}
 
-		batch_bytes, err := proto.Marshal(batch); 
+		batch_bytes, err := protocol.EncodeBatchMessage(batch); 
 		if err != nil {
 			log.Printf("error sending batch to client %s: %v", clientID, err)
 			return
@@ -59,7 +59,7 @@ func Handle(conn net.Conn, clientID string, middleware *middleware.Middleware) {
 		)
 		middleware.BasicSend(
 			"data_batch",
-			[]byte("1"),
+			batch_bytes,
 			"calibration_exchange",
 		)
 
