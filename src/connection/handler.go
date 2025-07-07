@@ -58,7 +58,7 @@ func Handle(conn net.Conn, clientID string, middleware *middleware.Middleware) {
 			"data_exchange",
 		)
 		middleware.BasicSend(
-			"data_batch",
+			"data",
 			batch_bytes,
 			"calibration_exchange",
 		)
