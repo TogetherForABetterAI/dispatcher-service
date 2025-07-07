@@ -5,6 +5,8 @@ services:
       dockerfile: docker/Dockerfile.proto
     volumes:
       - ./src/pb:/app/src/pb
+    networks:
+      - mlflow-network
 
   data-dispatcher-service:
     build:
@@ -15,4 +17,9 @@ services:
       - proto-gen
     volumes:
       - ./src/pb:/app/src/pb
-    network_mode: host
+    networks:
+      - mlflow-network
+
+networks:
+  mlflow-network:
+    external: true
