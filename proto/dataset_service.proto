@@ -59,7 +59,7 @@ message DatasetInfo {
 message HealthCheckRequest {}
 
 // Health check response
-message HealthCheckResponse {
+ HealthCheckResponse {
   string status = 1;  // "SERVING", "NOT_SERVING", "SERVICE_UNKNOWN"
   string message = 2;
 } 

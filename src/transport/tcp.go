@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/mlops-eval/data-dispatcher-service/src/connection"
+	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
 )
 
 type TCPServer struct {
@@ -27,6 +28,15 @@ func (s *TCPServer) Start() {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	log.Printf("Starting the server")
+
+	middleware, err := middleware.NewMiddleware()
+	if err != nil {
+		log.Fatalf("Error al crear el middleware: %v", err)
+	}
+	if err := middleware.DeclareExchange("data_exchange", "direct"); err != nil {
+		log.Fatalf("Error al declarar el exchange: %v", err)
+	}
+
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -42,7 +52,7 @@ func (s *TCPServer) Start() {
 		go func() {
 			// Generate a unique clientID for this connection
 			clientID := fmt.Sprintf("client_%s", conn.RemoteAddr().String())
-			connection.Handle(conn, clientID)
+			connection.Handle(conn, clientID, middleware)
 			s.wg.Done()
 		}()
 	}

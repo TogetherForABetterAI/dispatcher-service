@@ -10,16 +10,18 @@ import (
 	"github.com/mlops-eval/data-dispatcher-service/src/grpc"
 	"github.com/mlops-eval/data-dispatcher-service/src/pb"
 	"github.com/mlops-eval/data-dispatcher-service/src/protocol"
+	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
+
 )
 
 func init() {
 	godotenv.Load()
 }
 
-func Handle(conn net.Conn, clientID string) {
+func Handle(conn net.Conn, clientID string, middleware *middleware.Middleware) {
 	defer conn.Close()
 	batch_index := 0
-	address := "localhost:50051"
+	address := "dataset-grpc-service:50051"
 	log.Printf("address vale: %v", address)
 	grpcClient, err := grpc.NewClient(address)
 
@@ -44,17 +46,22 @@ func Handle(conn net.Conn, clientID string) {
 			return
 		}
 
-		batchMsg := &protocol.BatchMessage{
-			BatchIndex: int32(batch_index),
-			BatchData:  []interface{}{batch.GetData()},
-			ClientID:   clientID,
-			EOF:        batch.GetIsLastBatch(),
-		}
-
-		if err := protocol.EncodeBatchMessage(conn, batchMsg); err != nil {
+		batch_bytes, err := protocol.EncodeBatchMessage(batch); 
+		if err != nil {
 			log.Printf("error sending batch to client %s: %v", clientID, err)
 			return
 		}
+	
+		middleware.BasicSend(
+			"data",
+			batch_bytes,
+			"data_exchange",
+		)
+		middleware.BasicSend(
+			"data",
+			batch_bytes,
+			"calibration_exchange",
+		)
 
 		if batch.GetIsLastBatch() {
 			log.Printf("transmission to client %s completed", clientID)
@@ -62,5 +69,7 @@ func Handle(conn net.Conn, clientID string) {
 		}
 
 		batch_index++
+
+		print("Batch sent to client with index: ", batch_index, "\n")
 	}
 }
