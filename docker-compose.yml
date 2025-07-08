@@ -1,20 +1,9 @@
 services:
-  proto-gen:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.proto
-    volumes:
-      - ./src/pb:/app/src/pb
-    networks:
-      - mlflow-network
-
   data-dispatcher-service:
     build:
       context: .
       dockerfile: docker/Dockerfile.server
     container_name: data-dispatcher-service
-    depends_on:
-      - proto-gen
     volumes:
       - ./src/pb:/app/src/pb
     networks:
