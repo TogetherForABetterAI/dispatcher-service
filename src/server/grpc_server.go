@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"sync"
 
@@ -14,14 +13,14 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
-// DataDispatcherServer implements the DataDispatcherService gRPC service
+// DataDispatcherServer implements the ClientNotificationService gRPC service
 type DataDispatcherServer struct {
-	pb.UnimplementedDataDispatcherServiceServer
+	pb.UnimplementedClientNotificationServiceServer
 	logger     *logrus.Logger
-	clientWg   sync.WaitGroup // Track active client goroutines
-	shutdown   chan struct{}  // Signal for graceful shutdown
+	clientWg   sync.WaitGroup  // Track active client goroutines
+	shutdown   chan struct{}   // Signal for graceful shutdown
 	processor  ClientProcessor // Interface for processing client data
-	grpcServer *grpc.Server   // gRPC server instance
+	grpcServer *grpc.Server    // gRPC server instance
 }
 
 // ClientProcessor defines the interface for processing client data
@@ -33,7 +32,7 @@ type ClientProcessor interface {
 func NewDataDispatcherServer(processor ClientProcessor) *DataDispatcherServer {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
-	
+
 	return &DataDispatcherServer{
 		logger:    logger,
 		shutdown:  make(chan struct{}),
@@ -44,10 +43,8 @@ func NewDataDispatcherServer(processor ClientProcessor) *DataDispatcherServer {
 // NotifyNewClient handles new client notifications and spawns a goroutine to process them
 func (s *DataDispatcherServer) NotifyNewClient(ctx context.Context, req *pb.NewClientRequest) (*pb.NewClientResponse, error) {
 	s.logger.WithFields(logrus.Fields{
-		"client_id":  req.ClientId,
-		"queue_name": req.QueueName,
-		"amqp_host":  req.AmqpHost,
-		"amqp_port":  req.AmqpPort,
+		"client_id":   req.ClientId,
+		"routing_key": req.RoutingKey,
 	}).Info("Received new client notification")
 
 	// Validate request
@@ -58,10 +55,10 @@ func (s *DataDispatcherServer) NotifyNewClient(ctx context.Context, req *pb.NewC
 		}, nil
 	}
 
-	if req.QueueName == "" {
+	if req.RoutingKey == "" {
 		return &pb.NewClientResponse{
-			Status:  "ERROR", 
-			Message: "queue_name is required",
+			Status:  "ERROR",
+			Message: "routing_key is required",
 		}, nil
 	}
 
@@ -69,11 +66,11 @@ func (s *DataDispatcherServer) NotifyNewClient(ctx context.Context, req *pb.NewC
 	s.clientWg.Add(1)
 	go func() {
 		defer s.clientWg.Done()
-		
+
 		// Create a context that can be cancelled on shutdown
 		clientCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		
+
 		// Listen for shutdown signal
 		go func() {
 			select {
@@ -82,7 +79,7 @@ func (s *DataDispatcherServer) NotifyNewClient(ctx context.Context, req *pb.NewC
 			case <-clientCtx.Done():
 			}
 		}()
-		
+
 		if err := s.processor.ProcessClient(clientCtx, req); err != nil {
 			s.logger.WithFields(logrus.Fields{
 				"client_id": req.ClientId,
@@ -117,10 +114,10 @@ func (s *DataDispatcherServer) Start(port int) error {
 	}
 
 	s.grpcServer = grpc.NewServer()
-	
-	// Register the data dispatcher service
-	pb.RegisterDataDispatcherServiceServer(s.grpcServer, s)
-	
+
+	// Register the client notification service
+	pb.RegisterClientNotificationServiceServer(s.grpcServer, s)
+
 	// Register health service
 	healthServer := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(s.grpcServer, healthServer)
@@ -138,17 +135,17 @@ func (s *DataDispatcherServer) Start(port int) error {
 // Stop gracefully stops the server and waits for all client goroutines to finish
 func (s *DataDispatcherServer) Stop() {
 	s.logger.Info("Initiating graceful shutdown")
-	
+
 	// Signal all client goroutines to stop
 	close(s.shutdown)
-	
+
 	// Gracefully stop the gRPC server
 	if s.grpcServer != nil {
 		s.grpcServer.GracefulStop()
 	}
-	
+
 	// Wait for all client goroutines to finish
 	s.clientWg.Wait()
-	
+
 	s.logger.Info("Graceful shutdown completed")
-} 
+}
