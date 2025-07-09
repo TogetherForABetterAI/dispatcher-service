@@ -7,8 +7,8 @@ services:
     volumes:
       - ./src/pb:/app/src/pb
     networks:
-      - mlflow-network
+      - tpp-network
 
 networks:
-  mlflow-network:
+  tpp-network:
     external: true
