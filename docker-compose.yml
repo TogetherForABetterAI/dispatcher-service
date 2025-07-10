@@ -5,6 +5,7 @@ services:
       dockerfile: docker/Dockerfile.server
     container_name: data-dispatcher-service
     environment:
+      - DATASET_SERVICE_ADDR=dataset-grpc-service:50051
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=guest
