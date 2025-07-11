@@ -25,8 +25,8 @@ A gRPC microservice that handles authenticated client notifications and dispatch
   - Supports configurable datasets (MNIST, CIFAR-10, etc.) and batch sizes.
 
 - **RabbitMQ Publishing:**
-  - Publishes fetched data batches to two RabbitMQ exchanges: `inter-connection-exchange` and `dataset-exchange`.
-  - Uses routing keys for message routing to specific queues in each exchange.
+  - Publishes fetched data batches to the `dataset-exchange` RabbitMQ exchange.
+  - Uses routing keys for message routing to specific queues in the exchange.
   - Includes retry logic with exponential backoff for reliable message delivery.
   - Each message contains batch metadata and is marked as persistent.
 
@@ -55,11 +55,7 @@ message NewClientResponse {
 }
 ```
 
-**Note**: The service publishes data to two RabbitMQ exchanges:
-- `inter-connection-exchange`
-- `dataset-exchange`
-
-Both exchanges use the provided `routing_key` for message routing. RabbitMQ connection details are configured via environment variables:
+**Note**: The service publishes data to the `dataset-exchange` RabbitMQ exchange using the provided `routing_key` for message routing. RabbitMQ connection details are configured via environment variables:
 - `RABBITMQ_HOST` (default: localhost)
 - `RABBITMQ_PORT` (default: 5672)
 - `RABBITMQ_USER` (default: guest)
@@ -101,7 +97,7 @@ response, err := client.NotifyNewClient(ctx, &pb.NewClientRequest{
 1. **Authentication Backend** calls `NotifyNewClient` with client details and routing key
 2. **Data Dispatcher Service** immediately responds with "OK" and spawns a goroutine
 3. **Goroutine** connects to the dataset-generator-service and fetches data batches
-4. **Each batch** is published to both `inter-connection-exchange` and `dataset-exchange` using the provided routing key
+4. **Each batch** is published to the `dataset-exchange` using the provided routing key
 5. **Process continues** until all dataset batches are published or context is cancelled
 
 ## RabbitMQ Message Format
