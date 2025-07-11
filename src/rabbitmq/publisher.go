@@ -35,12 +35,6 @@ type BatchData struct {
 	Timestamp   time.Time `json:"timestamp"`
 }
 
-// ExchangeConfig holds the exchange names
-type ExchangeConfig struct {
-	InterConnectionExchange string
-	DatasetExchange         string
-}
-
 // NewPublisher creates a new RabbitMQ publisher with the given configuration
 func NewPublisher(config Config) (*Publisher, error) {
 	logger := logrus.New()
@@ -75,7 +69,7 @@ func NewPublisher(config Config) (*Publisher, error) {
 	return publisher, nil
 }
 
-// PublishBatch publishes a data batch to both exchanges using the provided routing key
+// PublishBatch publishes a data batch to the dataset-exchange using the provided routing key
 func (p *Publisher) PublishBatch(ctx context.Context, routingKey string, batch *BatchData) error {
 	// Convert BatchData to protobuf DataBatch
 	protoBatch := &datasetpb.DataBatch{
@@ -90,33 +84,8 @@ func (p *Publisher) PublishBatch(ctx context.Context, routingKey string, batch *
 		return fmt.Errorf("failed to marshal batch data to protobuf: %w", err)
 	}
 
-	// Exchange names
-	interConnectionExchange := "inter-connection-exchange"
+	// Exchange name
 	datasetExchange := "dataset-exchange"
-
-	// Publish to inter-connection-exchange
-	err = p.channel.PublishWithContext(
-		ctx,
-		interConnectionExchange, // exchange
-		routingKey,              // routing key
-		false,                   // mandatory
-		false,                   // immediate
-		amqp.Publishing{
-			ContentType:  "application/x-protobuf",
-			Body:         body,
-			Timestamp:    batch.Timestamp,
-			DeliveryMode: amqp.Persistent, // Make message persistent
-			Headers: amqp.Table{
-				"client_id":     batch.ClientID,
-				"batch_index":   batch.BatchIndex,
-				"is_last_batch": batch.IsLastBatch,
-			},
-		},
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to publish message to %s exchange: %w", interConnectionExchange, err)
-	}
 
 	// Publish to dataset-exchange
 	err = p.channel.PublishWithContext(
@@ -148,8 +117,8 @@ func (p *Publisher) PublishBatch(ctx context.Context, routingKey string, batch *
 		"batch_index":   batch.BatchIndex,
 		"is_last_batch": batch.IsLastBatch,
 		"data_size":     len(batch.Data),
-		"exchanges":     []string{interConnectionExchange, datasetExchange},
-	}).Debug("Published batch to both exchanges")
+		"exchange":      datasetExchange,
+	}).Debug("Published batch to dataset-exchange")
 
 	return nil
 }
