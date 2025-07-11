@@ -4,11 +4,10 @@
 // - protoc             v5.29.4
 // source: new-client-service.proto
 
-package newclientservice
+package pb
 
 import (
 	context "context"
-
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -20,15 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ClientNotificationService_NotifyNewClient_FullMethodName = "/newClient.ClientNotificationService/NotifyNewClient"
-	ClientNotificationService_HealthCheck_FullMethodName     = "/newClient.ClientNotificationService/HealthCheck"
+	ClientNotificationService_NotifyNewClient_FullMethodName = "/new_client.ClientNotificationService/NotifyNewClient"
+	ClientNotificationService_HealthCheck_FullMethodName     = "/new_client.ClientNotificationService/HealthCheck"
 )
 
 // ClientNotificationServiceClient is the client API for ClientNotificationService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-//
-// Client Notification service definition
 type ClientNotificationServiceClient interface {
 	// Notify the service about a new authenticated client that needs data streaming
 	NotifyNewClient(ctx context.Context, in *NewClientRequest, opts ...grpc.CallOption) (*NewClientResponse, error)
@@ -67,8 +64,6 @@ func (c *clientNotificationServiceClient) HealthCheck(ctx context.Context, in *H
 // ClientNotificationServiceServer is the server API for ClientNotificationService service.
 // All implementations must embed UnimplementedClientNotificationServiceServer
 // for forward compatibility.
-//
-// Client Notification service definition
 type ClientNotificationServiceServer interface {
 	// Notify the service about a new authenticated client that needs data streaming
 	NotifyNewClient(context.Context, *NewClientRequest) (*NewClientResponse, error)
@@ -152,7 +147,7 @@ func _ClientNotificationService_HealthCheck_Handler(srv interface{}, ctx context
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ClientNotificationService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "newClient.ClientNotificationService",
+	ServiceName: "new_client.ClientNotificationService",
 	HandlerType: (*ClientNotificationServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
