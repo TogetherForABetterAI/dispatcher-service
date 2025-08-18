@@ -83,32 +83,47 @@ func (p *ClientDataProcessor) ProcessClient(ctx context.Context, req *clientpb.N
 			}).Error("Failed to fetch batch from dataset service")
 			return fmt.Errorf("failed to fetch batch %d: %w", batchIndex, err)
 		}
-
-		protoBatch := &datasetpb.DataBatch{
+		// Prepare unlabeled and labeled batches
+		unlabeledProtoBatch := &datasetpb.DataBatchUnlabeled{
 			Data:        batch.GetData(),
 			BatchIndex:  batch.GetBatchIndex(),
 			IsLastBatch: batch.GetIsLastBatch(),
 		}
-		body, err := proto.Marshal(protoBatch)
-		if err != nil {
-			return fmt.Errorf("failed to marshal protoBatch: %w", err)
+		labeledProtoBatch := &datasetpb.DataBatchLabeled{
+			Data:        batch.GetData(),
+			BatchIndex:  batch.GetBatchIndex(),
+			IsLastBatch: batch.GetIsLastBatch(),
+			Labels:      batch.GetLabels(),
 		}
 
-		// Publish to both exchanges using routing key with retry
-		exchanges := []string{config.DATASET_EXCHANGE, config.CALIBRATION_EXCHANGE}
-		rk := req.RoutingKey
-		for _, exchange := range exchanges {
-			if exchange == config.CALIBRATION_EXCHANGE {
-				rk = fmt.Sprintf("%s-%s", req.RoutingKey, "data")
-			}
-			if err := middleware.Publish(rk, body, exchange); err != nil {
+		// Marshal batches
+		unlabeledBody, err := proto.Marshal(unlabeledProtoBatch)
+		if err != nil {
+			return fmt.Errorf("failed to marshal unlabeledProtoBatch: %w", err)
+		}
+		labeledBody, err := proto.Marshal(labeledProtoBatch)
+		if err != nil {
+			return fmt.Errorf("failed to marshal labeledProtoBatch: %w", err)
+		}
+
+		// Publish batches to exchanges
+		routingKeys := []struct {
+			key   string
+			body  []byte
+		}{
+			{fmt.Sprintf("%s.unlabeled", req.RoutingKey), unlabeledBody},
+			{fmt.Sprintf("%s.labeled", req.RoutingKey), labeledBody},
+		}
+
+		for _, rk := range routingKeys {
+			if err := middleware.Publish(rk.key, rk.body, config.DATASET_EXCHANGE); err != nil {
 				p.logger.WithFields(logrus.Fields{
 					"client_id":   req.ClientId,
 					"batch_index": batchIndex,
-					"routing_key": rk,
+					"routing_key": rk.key,
 					"error":       err.Error(),
 				}).Error("Failed to publish batch to exchanges")
-				return fmt.Errorf("failed to publish batch %d with routing key %s: %w", batchIndex, rk, err)
+				return fmt.Errorf("failed to publish batch %d with routing key %s: %w", batchIndex, rk.key, err)
 			}
 		}
 

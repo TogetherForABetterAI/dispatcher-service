@@ -69,7 +69,7 @@ func InitializeConfig() *GlobalConfig {
 	}
 
 	batchSizeStr := os.Getenv("BATCH_SIZE")
-	batchSize := int32(30)
+	batchSize := int32(300)
 	if batchSizeStr != "" {
 		if parsed, err := strconv.ParseInt(batchSizeStr, 10, 32); err == nil {
 			batchSize = int32(parsed)
@@ -97,5 +97,4 @@ func InitializeConfig() *GlobalConfig {
 
 const(
 	DATASET_EXCHANGE = "dataset-exchange"
-	CALIBRATION_EXCHANGE = "calibration-exchange"
 )

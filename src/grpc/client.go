@@ -30,7 +30,7 @@ func NewClient(serverAddr string) (*Client, error) {
 }
 
 // GetBatch fetches a single batch from the dataset service
-func (c *Client) GetBatch(ctx context.Context, req *datasetpb.GetBatchRequest) (*datasetpb.DataBatch, error) {
+func (c *Client) GetBatch(ctx context.Context, req *datasetpb.GetBatchRequest) (*datasetpb.DataBatchLabeled, error) {
 	return c.client.GetBatch(ctx, req)
 }
 
