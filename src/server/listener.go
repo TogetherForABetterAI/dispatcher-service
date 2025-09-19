@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
-	"github.com/mlops-eval/data-dispatcher-service/src/types"
+	"github.com/mlops-eval/data-dispatcher-service/src/models"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sirupsen/logrus"
 )
@@ -56,7 +56,7 @@ func (l *Listener) HandleMessage(msg amqp.Delivery, shutdown chan struct{}, clie
 	}).Debug("Received client notification message")
 
 	// Parse the notification
-	var notification types.ConnectNotification
+	var notification models.ConnectNotification
 	if err := json.Unmarshal(msg.Body, &notification); err != nil {
 		l.logger.WithFields(logrus.Fields{
 			"error": err.Error(),

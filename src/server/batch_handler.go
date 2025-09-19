@@ -9,7 +9,7 @@ import (
 	"github.com/mlops-eval/data-dispatcher-service/src/grpc"
 	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
 	datasetpb "github.com/mlops-eval/data-dispatcher-service/src/pb/dataset-service"
-	"github.com/mlops-eval/data-dispatcher-service/src/types"
+	"github.com/mlops-eval/data-dispatcher-service/src/models"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
@@ -35,7 +35,7 @@ func NewBatchHandler(middlewareInstance *middleware.Middleware, grpcClient *grpc
 }
 
 // Start initializes the batch handler and processes all batches for the client
-func (bh *BatchHandler) Start(ctx context.Context, notification *types.ConnectNotification) error {
+func (bh *BatchHandler) Start(ctx context.Context, notification *models.ConnectNotification) error {
 	bh.logger.WithFields(logrus.Fields{
 		"client_id":    notification.ClientId,
 		"dataset_name": bh.datasetName,
@@ -47,7 +47,7 @@ func (bh *BatchHandler) Start(ctx context.Context, notification *types.ConnectNo
 }
 
 // processBatches handles the main batch processing loop
-func (bh *BatchHandler) processBatches(ctx context.Context, notification *types.ConnectNotification) error {
+func (bh *BatchHandler) processBatches(ctx context.Context, notification *models.ConnectNotification) error {
 	batchIndex := int32(0)
 
 	for {
@@ -123,7 +123,7 @@ func (bh *BatchHandler) FetchBatch(ctx context.Context, batchIndex int32) (*data
 }
 
 // PublishBatch handles the transformation and publishing of a single batch
-func (bh *BatchHandler) PublishBatch(notification *types.ConnectNotification, batch *datasetpb.DataBatchLabeled) error {
+func (bh *BatchHandler) PublishBatch(notification *models.ConnectNotification, batch *datasetpb.DataBatchLabeled) error {
 	// Prepare batches
 	unlabeledBatch, labeledBatch := bh.prepareBatches(batch)
 
@@ -171,7 +171,7 @@ func (bh *BatchHandler) marshalBatches(unlabeledBatch *datasetpb.DataBatchUnlabe
 }
 
 // publishBatches publishes both unlabeled and labeled batches to RabbitMQ
-func (bh *BatchHandler) publishBatches(notification *types.ConnectNotification, unlabeledBody, labeledBody []byte, batchIndex int32) error {
+func (bh *BatchHandler) publishBatches(notification *models.ConnectNotification, unlabeledBody, labeledBody []byte, batchIndex int32) error {
 	routingKeys := []struct {
 		key  string
 		body []byte

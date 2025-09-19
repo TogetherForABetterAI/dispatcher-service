@@ -7,7 +7,7 @@ import (
 	"github.com/mlops-eval/data-dispatcher-service/src/config"
 	"github.com/mlops-eval/data-dispatcher-service/src/grpc"
 	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
-	"github.com/mlops-eval/data-dispatcher-service/src/types"
+	"github.com/mlops-eval/data-dispatcher-service/src/models"
 	"github.com/sirupsen/logrus"
 )
 
@@ -35,7 +35,7 @@ func NewClientManager(cfg config.GlobalConfig) *ClientManager {
 }
 
 // HandleClient processes a client notification by fetching and publishing dataset batches
-func (c *ClientManager) HandleClient(ctx context.Context, notification *types.ConnectNotification) error {
+func (c *ClientManager) HandleClient(ctx context.Context, notification *models.ConnectNotification) error {
 	c.logger.WithFields(logrus.Fields{
 		"client_id": notification.ClientId,
 	}).Info("Starting client data processing")
