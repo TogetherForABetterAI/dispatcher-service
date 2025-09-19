@@ -10,9 +10,8 @@ import (
 
 const (
 	DATASET_EXCHANGE = "dataset-exchange"
-	NEW_CONNECTIONS_EXCHANGE = "new-connections-exchange"
+	CONNECTION_QUEUE_NAME = "data-dispatcher-connections"
 )
-
 
 type GlobalConfig struct {
 	logLevel         string
@@ -139,11 +138,6 @@ func init() {
 		panic(fmt.Sprintf("Failed to load configuration: %v", err))
 	}
 	Config = config
-}
-
-// GetQueueName returns the queue name following the pattern: {container_name}-new-connections-queue
-func (c GlobalConfig) GetQueueName() string {
-	return fmt.Sprintf("%s-new-connections-queue", c.containerName)
 }
 
 // GlobalConfig getters
