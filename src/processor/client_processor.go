@@ -75,7 +75,18 @@ func (p *ClientDataProcessor) ProcessClient(ctx context.Context, req *clientpb.N
 	p.logger.WithFields(logrus.Fields{
 		"client_id":   req.ClientId,
 		"routing_key": req.RoutingKey,
+		"model_type":  req.ModelType,
 	}).Info("Starting client data processing")
+
+	// Determine dataset name from model_type
+	// Use client's model_type as dataset name, fallback to global config if empty
+	datasetName := req.ModelType
+	if datasetName == "" {
+		datasetName = p.grpcConfig.DatasetName
+		p.logger.WithFields(logrus.Fields{
+			"client_id": req.ClientId,
+		}).Warn("No model_type provided, using global dataset configuration")
+	}
 
 	// Start processing batches
 	batchIndex := int32(0)
@@ -84,7 +95,7 @@ func (p *ClientDataProcessor) ProcessClient(ctx context.Context, req *clientpb.N
 		batchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 
 		batchReq := &datasetpb.GetBatchRequest{
-			DatasetName: p.grpcConfig.DatasetName,
+			DatasetName: datasetName, // Use per-client dataset
 			BatchSize:   p.grpcConfig.BatchSize,
 			BatchIndex:  batchIndex,
 		}

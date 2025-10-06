@@ -45,6 +45,7 @@ func (s *DataDispatcherServer) NotifyNewClient(ctx context.Context, req *clientp
 	s.logger.WithFields(logrus.Fields{
 		"client_id":   req.ClientId,
 		"routing_key": req.RoutingKey,
+		"model_type":  req.ModelType,
 	}).Info("Received new client notification")
 
 	// Validate request
@@ -59,6 +60,13 @@ func (s *DataDispatcherServer) NotifyNewClient(ctx context.Context, req *clientp
 		return &clientpb.NewClientResponse{
 			Status:  "ERROR",
 			Message: "routing_key is required",
+		}, nil
+	}
+
+	if req.ModelType == "" {
+		return &clientpb.NewClientResponse{
+			Status:  "ERROR",
+			Message: "model_type is required",
 		}, nil
 	}
 
