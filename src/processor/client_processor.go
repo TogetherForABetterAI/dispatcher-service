@@ -49,16 +49,21 @@ func NewClientDataProcessor(
 func NewClientDataProcessorFromConfig(globalConfig *config.GlobalConfig, logger *logrus.Logger) (*ClientDataProcessor, func(), error) {
 	middleware, err := middleware.NewMiddleware(globalConfig.MiddlewareConfig)
 	if err != nil {
-
 		return nil, nil, fmt.Errorf("failed to create middleware publisher: %w", err)
 	}
-	defer middleware.Close()
+
+	// Declare the dataset exchange on startup
+	if err := middleware.DeclareExchange(config.DATASET_EXCHANGE, "topic"); err != nil {
+		middleware.Close()
+		return nil, nil, fmt.Errorf("failed to declare exchange '%s': %w", config.DATASET_EXCHANGE, err)
+	}
+	logger.WithField("exchange", config.DATASET_EXCHANGE).Info("Successfully declared dataset exchange")
 
 	datasetGrpcClient, err := grpc.NewClient(globalConfig.GrpcConfig.DatasetAddr)
 	if err != nil {
+		middleware.Close()
 		return nil, nil, fmt.Errorf("failed to create dataset service client: %w", err)
 	}
-	defer datasetGrpcClient.Close()
 
 	processor := NewClientDataProcessor(datasetGrpcClient, middleware, logger, globalConfig.GrpcConfig)
 
