@@ -53,7 +53,7 @@ func NewClientDataProcessorFromConfig(globalConfig *config.GlobalConfig, logger 
 	}
 
 	// Declare the dataset exchange on startup
-	if err := middleware.DeclareExchange(config.DATASET_EXCHANGE, "topic"); err != nil {
+	if err := middleware.DeclareExchange(config.DATASET_EXCHANGE, "direct"); err != nil {
 		middleware.Close()
 		return nil, nil, fmt.Errorf("failed to declare exchange '%s': %w", config.DATASET_EXCHANGE, err)
 	}
@@ -83,15 +83,7 @@ func (p *ClientDataProcessor) ProcessClient(ctx context.Context, req *clientpb.N
 		"model_type":  req.ModelType,
 	}).Info("Starting client data processing")
 
-	// Determine dataset name from model_type
-	// Use client's model_type as dataset name, fallback to global config if empty
 	datasetName := req.ModelType
-	if datasetName == "" {
-		datasetName = p.grpcConfig.DatasetName
-		p.logger.WithFields(logrus.Fields{
-			"client_id": req.ClientId,
-		}).Warn("No model_type provided, using global dataset configuration")
-	}
 
 	// Start processing batches
 	batchIndex := int32(0)
