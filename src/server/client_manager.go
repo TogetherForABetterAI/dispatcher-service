@@ -8,6 +8,7 @@ import (
 	"github.com/mlops-eval/data-dispatcher-service/src/grpc"
 	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
 	"github.com/mlops-eval/data-dispatcher-service/src/models"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sirupsen/logrus"
 )
 
@@ -17,10 +18,12 @@ type ClientManager struct {
 	logger             *logrus.Logger
 	maxRetries         int
 	batchSize          int32
+	conn               *amqp.Connection
+	middleware         *middleware.Middleware
 }
 
 // NewClientManager creates a new client manager
-func NewClientManager(cfg config.GlobalConfig) *ClientManager {
+func NewClientManager(cfg config.GlobalConfig, conn *amqp.Connection, middleware *middleware.Middleware) *ClientManager {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
 
@@ -29,22 +32,24 @@ func NewClientManager(cfg config.GlobalConfig) *ClientManager {
 		logger:             logger,
 		maxRetries:         cfg.GetMiddlewareConfig().GetMaxRetries(),
 		batchSize:          cfg.GetGrpcConfig().GetBatchSize(),
+		conn:               conn,
+		middleware:         middleware,
 	}
 }
 
 // HandleClient processes a client notification by fetching and publishing dataset batches
 func (c *ClientManager) HandleClient(ctx context.Context, notification *models.ConnectNotification) error {
 
-	// Create RabbitMQ middleware using global config
-	middlewareInstance, err := middleware.NewMiddleware(config.Config.GetMiddlewareConfig())
+	// Create RabbitMQ publisher using shared connection
+	publisher, err := middleware.NewPublisher(c.conn)
 	if err != nil {
-		return fmt.Errorf("failed to create RabbitMQ middleware: %w", err)
+		return fmt.Errorf("failed to create RabbitMQ publisher: %w", err)
 	}
-	defer middlewareInstance.Close()
+	defer publisher.Close()
 
-	// Declare exchange
-	if err := middlewareInstance.DeclareExchange(config.DATASET_EXCHANGE, "direct"); err != nil {
-		return fmt.Errorf("failed to declare exchange: %w", err)
+	// Create and bind queues for this client
+	if err := c.createAndBindClientQueues(notification.ClientId); err != nil {
+		return err
 	}
 
 	// Create gRPC client for dataset service
@@ -54,6 +59,32 @@ func (c *ClientManager) HandleClient(ctx context.Context, notification *models.C
 	}
 
 	// Create and start batch handler
-	batchHandler := NewBatchHandler(middlewareInstance, grpcClient, notification.ModelType, c.batchSize, c.logger)
+	batchHandler := NewBatchHandler(publisher, grpcClient, notification.ModelType, c.batchSize, c.logger)
 	return batchHandler.Start(ctx, notification)
+}
+
+// createAndBindClientQueues creates and binds labeled and unlabeled queues for a client
+func (c *ClientManager) createAndBindClientQueues(clientID string) error {
+	labeledQueueName := fmt.Sprintf("%s_labeled_queue", clientID)
+	unlabeledQueueName := fmt.Sprintf("%s_unlabeled_queue", clientID)
+	routingKeyLabeled := fmt.Sprintf("%s.labeled", clientID)
+	routingKeyUnlabeled := fmt.Sprintf("%s.unlabeled", clientID)
+
+	// Declare and bind labeled queue
+	if err := c.middleware.DeclareQueue(labeledQueueName); err != nil {
+		return fmt.Errorf("failed to declare queue %s: %w", labeledQueueName, err)
+	}
+	if err := c.middleware.BindQueue(labeledQueueName, config.DATASET_EXCHANGE, routingKeyLabeled); err != nil {
+		return fmt.Errorf("failed to bind queue %s to exchange %s with routing key %s: %w", labeledQueueName, config.DATASET_EXCHANGE, routingKeyLabeled, err)
+	}
+
+	// Declare and bind unlabeled queue
+	if err := c.middleware.DeclareQueue(unlabeledQueueName); err != nil {
+		return fmt.Errorf("failed to declare queue %s: %w", unlabeledQueueName, err)
+	}
+	if err := c.middleware.BindQueue(unlabeledQueueName, config.DATASET_EXCHANGE, routingKeyUnlabeled); err != nil {
+		return fmt.Errorf("failed to bind queue %s to exchange %s with routing key %s: %w", unlabeledQueueName, config.DATASET_EXCHANGE, routingKeyUnlabeled, err)
+	}
+
+	return nil
 }
