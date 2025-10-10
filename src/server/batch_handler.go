@@ -14,9 +14,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// BatchHandler manages middleware and gRPC client instances for batch processing
+// BatchHandler manages publisher and gRPC client instances for batch processing
 type BatchHandler struct {
-	middleware *middleware.Middleware
+	publisher  *middleware.Publisher
 	grpcClient *grpc.Client
 	logger     *logrus.Logger
 	modelType  string
@@ -24,9 +24,9 @@ type BatchHandler struct {
 }
 
 // NewBatchHandler creates a new batch handler with initialized dependencies
-func NewBatchHandler(middlewareInstance *middleware.Middleware, grpcClient *grpc.Client, modelType string, batchSize int32, logger *logrus.Logger) *BatchHandler {
+func NewBatchHandler(publisher *middleware.Publisher, grpcClient *grpc.Client, modelType string, batchSize int32, logger *logrus.Logger) *BatchHandler {
 	return &BatchHandler{
-		middleware: middlewareInstance,
+		publisher:  publisher,
 		grpcClient: grpcClient,
 		logger:     logger,
 		modelType:  modelType,
@@ -136,7 +136,7 @@ func (bh *BatchHandler) PublishBatch(notification *models.ConnectNotification, b
 	}
 
 	// Publish batches
-	return bh.publishBatches(notification, unlabeledBody, labeledBody, batch.GetBatchIndex())
+	return bh.publishBatches(notification.ClientId, unlabeledBody, labeledBody, batch.GetBatchIndex())
 }
 
 // prepareBatches creates the unlabeled and labeled protobuf batches
@@ -173,27 +173,18 @@ func (bh *BatchHandler) marshalBatches(unlabeledBatch *datasetpb.DataBatchUnlabe
 }
 
 // publishBatches publishes both unlabeled and labeled batches to RabbitMQ
-func (bh *BatchHandler) publishBatches(notification *models.ConnectNotification, unlabeledBody, labeledBody []byte, batchIndex int32) error {
+func (bh *BatchHandler) publishBatches(clientID string, unlabeledBody, labeledBody []byte, batchIndex int32) error {
 	routingKeys := []struct {
 		key  string
 		body []byte
-		typ  string
 	}{
-		{fmt.Sprintf("%s.unlabeled", notification.ClientId), unlabeledBody, "unlabeled"},
-		{fmt.Sprintf("%s.labeled", notification.ClientId), labeledBody, "labeled"},
+		{fmt.Sprintf("%s.unlabeled", clientID), unlabeledBody},
+		{fmt.Sprintf("%s.labeled", clientID), labeledBody},
 	}
 
 	for _, rk := range routingKeys {
-		if err := bh.middleware.Publish(rk.key, rk.body, config.DATASET_EXCHANGE); err != nil {
-			bh.logger.WithFields(logrus.Fields{
-				"client_id":   notification.ClientId,
-				"model_type":  notification.ModelType,
-				"batch_index": batchIndex,
-				"routing_key": rk.key,
-				"batch_type":  rk.typ,
-				"error":       err.Error(),
-			}).Error("Failed to publish batch to exchange")
-			return fmt.Errorf("failed to publish %s batch with routing key %s: %w", rk.typ, rk.key, err)
+		if err := bh.publisher.Publish(rk.key, rk.body, config.DATASET_EXCHANGE); err != nil {
+			return fmt.Errorf("failed to publish batch with routing key %s: %w", rk.key, err)
 		}
 	}
 
