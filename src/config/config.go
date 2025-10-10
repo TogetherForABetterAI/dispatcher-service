@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	DATASET_EXCHANGE = "dataset-exchange"
+	DATASET_EXCHANGE      = "dataset-exchange"
 	CONNECTION_QUEUE_NAME = "data-dispatcher-connections"
 )
 
@@ -77,7 +77,6 @@ func NewConfig() (GlobalConfig, error) {
 	if datasetAddr == "" {
 		return GlobalConfig{}, fmt.Errorf("DATASET_SERVICE_ADDR environment variable is required")
 	}
-
 
 	// Get batch size from environment
 	batchSizeStr := os.Getenv("BATCH_SIZE")
