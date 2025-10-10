@@ -4,7 +4,7 @@
 // - protoc             v5.29.4
 // source: dataset-service.proto
 
-package datasetpb
+package pb
 
 import (
 	context "context"
