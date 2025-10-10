@@ -21,12 +21,12 @@ type Middleware struct {
 
 const MAX_RETRIES = 5
 
-func NewMiddleware(config *config.MiddlewareConfig) (*Middleware, error) {
+func NewMiddleware(cfg *config.MiddlewareConfig) (*Middleware, error) {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
 
 	url := fmt.Sprintf("amqp://%s:%s@%s:%d/",
-		config.GetUsername(), config.GetPassword(), config.GetHost(), config.GetPort())
+		cfg.GetUsername(), cfg.GetPassword(), cfg.GetHost(), cfg.GetPort())
 
 	conn, err := amqp.Dial(url)
 	if err != nil {
@@ -49,10 +49,18 @@ func NewMiddleware(config *config.MiddlewareConfig) (*Middleware, error) {
 		return nil, err
 	}
 
+	// Declare required exchanges here
+	mw := &Middleware{channel: ch}
+	if err := mw.DeclareExchange(config.DATASET_EXCHANGE, "direct"); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to declare exchange %s: %w", config.DATASET_EXCHANGE, err)
+	}
+
 	logger.WithFields(logrus.Fields{
-		"host": config.GetHost(),
-		"port": config.GetPort(),
-		"user": config.GetUsername(),
+		"host": cfg.GetHost(),
+		"port": cfg.GetPort(),
+		"user": cfg.GetUsername(),
 	}).Info("Connected to RabbitMQ")
 
 	return &Middleware{
@@ -60,18 +68,18 @@ func NewMiddleware(config *config.MiddlewareConfig) (*Middleware, error) {
 		channel:          ch,
 		confirms_chan:    confirms_chan,
 		logger:           logger,
-		MiddlewareConfig: config,
+		MiddlewareConfig: cfg,
 	}, nil
 }
 
 func (m *Middleware) DeclareQueue(queueName string) error {
 	_, err := m.channel.QueueDeclare(
-		queueName,    // name
-		true,  // durable
-		false, // delete when unused
-		true,  // exclusive
-		false, // no-wait
-		nil,   // arguments
+		queueName, // name
+		true,      // durable
+		false,     // delete when unused
+		false,      // exclusive
+		false,     // no-wait
+		nil,       // arguments
 	)
 	return err
 }
@@ -158,15 +166,14 @@ func (m *Middleware) BasicConsume(queueName string, callback func(amqp.Delivery)
 
 	go func() {
 		for msg := range msgs {
-			func(m amqp.Delivery) {
+			go func(m amqp.Delivery) {
 				defer func() {
 					if r := recover(); r != nil {
-						log.Printf("action: rabbitmq_callback | result: fail | error: %v\n", r)
+						log.Printf("panic in middleware callback: %v", r)
 						_ = m.Nack(false, true)
 					}
 				}()
 				callback(m)
-				_ = m.Ack(false)
 			}(msg)
 		}
 	}()
@@ -181,4 +188,9 @@ func (m *Middleware) Close() {
 	if err := m.conn.Close(); err != nil {
 		log.Printf("action: rabbitmq_connection_close | result: fail | error: %v", err)
 	}
+}
+
+// Conn returns the underlying connection for reuse
+func (m *Middleware) Conn() *amqp.Connection {
+	return m.conn
 }
