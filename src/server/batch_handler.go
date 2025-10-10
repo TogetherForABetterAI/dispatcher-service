@@ -51,6 +51,11 @@ func (bh *BatchHandler) processBatches(ctx context.Context, notification *models
 	batchIndex := int32(0)
 
 	for {
+
+		if ctx.Err() != nil {
+			return ctx.Err() // Context cancelled due to shutdown signal
+		}
+
 		// Fetch batch from dataset service using batch handler
 		batch, err := bh.FetchBatch(ctx, batchIndex)
 		if err != nil {
