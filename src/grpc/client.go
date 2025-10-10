@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"fmt"
+
 	datasetpb "github.com/mlops-eval/data-dispatcher-service/src/pb/dataset-service"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -16,7 +17,17 @@ type Client struct {
 
 // NewClient creates a new gRPC client for the dataset service
 func NewClient(serverAddr string) (*Client, error) {
-	conn, err := grpc.Dial(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Set max message size to 100MB to handle large batches
+	maxMsgSize := 100 * 1024 * 1024 // 100MB
+
+	conn, err := grpc.Dial(
+		serverAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(maxMsgSize),
+			grpc.MaxCallSendMsgSize(maxMsgSize),
+		),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to dataset service: %w", err)
 	}

@@ -53,7 +53,7 @@ func NewClientDataProcessorFromConfig(globalConfig *config.GlobalConfig, logger 
 	}
 
 	// Declare the dataset exchange on startup
-	if err := middleware.DeclareExchange(config.DATASET_EXCHANGE, "direct"); err != nil {
+	if err := middleware.DeclareExchange(config.DATASET_EXCHANGE, "topic"); err != nil {
 		middleware.Close()
 		return nil, nil, fmt.Errorf("failed to declare exchange '%s': %w", config.DATASET_EXCHANGE, err)
 	}
@@ -88,6 +88,12 @@ func (p *ClientDataProcessor) ProcessClient(ctx context.Context, req *clientpb.N
 
 	datasetName := req.ModelType
 
+	p.logger.WithFields(logrus.Fields{
+		"client_id":    req.ClientId,
+		"dataset_name": datasetName,
+		"batch_size":   p.grpcConfig.BatchSize,
+	}).Info("Starting batch fetching loop")
+
 	// Start processing batches
 	batchIndex := int32(0)
 	for {
@@ -100,6 +106,13 @@ func (p *ClientDataProcessor) ProcessClient(ctx context.Context, req *clientpb.N
 			BatchIndex:  batchIndex,
 		}
 
+		p.logger.WithFields(logrus.Fields{
+			"client_id":    req.ClientId,
+			"batch_index":  batchIndex,
+			"dataset_name": datasetName,
+			"batch_size":   p.grpcConfig.BatchSize,
+		}).Debug("Requesting batch from dataset service")
+
 		batch, err := p.datasetGrpcClient.GetBatch(batchCtx, batchReq)
 		cancel()
 
@@ -111,6 +124,14 @@ func (p *ClientDataProcessor) ProcessClient(ctx context.Context, req *clientpb.N
 			}).Error("Failed to fetch batch from dataset service")
 			return fmt.Errorf("failed to fetch batch %d: %w", batchIndex, err)
 		}
+
+		p.logger.WithFields(logrus.Fields{
+			"client_id":     req.ClientId,
+			"batch_index":   batchIndex,
+			"data_size":     len(batch.GetData()),
+			"labels_count":  len(batch.GetLabels()),
+			"is_last_batch": batch.GetIsLastBatch(),
+		}).Debug("Received batch from dataset service")
 
 		if err := p.publishBatch(routingKey, batch); err != nil {
 			p.logger.WithFields(logrus.Fields{
