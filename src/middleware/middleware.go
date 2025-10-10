@@ -1,11 +1,8 @@
 package middleware
 
 import (
-	"context"
 	"fmt"
 	"log"
-	"time"
-
 	"github.com/mlops-eval/data-dispatcher-service/src/config"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sirupsen/logrus"
@@ -106,49 +103,6 @@ func (m *Middleware) BindQueue(queueName, exchangeName, routingKey string) error
 	)
 }
 
-func (m *Middleware) Publish(routingKey string, message []byte, exchangeName string) error {
-	for attempt := 1; attempt <= m.MiddlewareConfig.GetMaxRetries(); attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := m.channel.PublishWithContext(
-			ctx,
-			exchangeName,
-			routingKey,
-			false, // mandatory
-			false, // immediate
-			amqp.Publishing{
-				DeliveryMode: amqp.Persistent,
-				Body:         message,
-			},
-		)
-		cancel()
-
-		if err != nil {
-			m.logger.WithFields(logrus.Fields{
-				"routing_key": routingKey,
-				"exchange":    exchangeName,
-			}).Error("Failed to publish message to exchange")
-			continue
-		}
-
-		confirmed := <-m.confirms_chan
-
-		if !confirmed.Ack {
-			m.logger.WithFields(logrus.Fields{
-				"routing_key": routingKey,
-				"exchange":    exchangeName,
-			}).Error("Failed to publish message to exchange")
-			continue
-		}
-
-		m.logger.WithFields(logrus.Fields{
-			"routing_key": routingKey,
-			"exchange":    exchangeName,
-		}).Debug("Published message to exchange")
-
-		return nil
-	}
-	return fmt.Errorf("failed to publish message to exchange %s after %d attempts", exchangeName, m.MiddlewareConfig.GetMaxRetries())
-}
 
 func (m *Middleware) BasicConsume(queueName string, callback func(amqp.Delivery)) error {
 	msgs, err := m.channel.Consume(
