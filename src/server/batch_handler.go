@@ -8,38 +8,38 @@ import (
 	"github.com/mlops-eval/data-dispatcher-service/src/config"
 	"github.com/mlops-eval/data-dispatcher-service/src/grpc"
 	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
-	datasetpb "github.com/mlops-eval/data-dispatcher-service/src/pb/dataset-service"
 	"github.com/mlops-eval/data-dispatcher-service/src/models"
+	datasetpb "github.com/mlops-eval/data-dispatcher-service/src/pb"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
 
 // BatchHandler manages middleware and gRPC client instances for batch processing
 type BatchHandler struct {
-	middleware  *middleware.Middleware
-	grpcClient  *grpc.Client
-	logger      *logrus.Logger
-	datasetName string
-	batchSize   int32
+	middleware *middleware.Middleware
+	grpcClient *grpc.Client
+	logger     *logrus.Logger
+	modelType  string
+	batchSize  int32
 }
 
 // NewBatchHandler creates a new batch handler with initialized dependencies
-func NewBatchHandler(middlewareInstance *middleware.Middleware, grpcClient *grpc.Client, datasetName string, batchSize int32, logger *logrus.Logger) *BatchHandler {
+func NewBatchHandler(middlewareInstance *middleware.Middleware, grpcClient *grpc.Client, modelType string, batchSize int32, logger *logrus.Logger) *BatchHandler {
 	return &BatchHandler{
-		middleware:  middlewareInstance,
-		grpcClient:  grpcClient,
-		logger:      logger,
-		datasetName: datasetName,
-		batchSize:   batchSize,
+		middleware: middlewareInstance,
+		grpcClient: grpcClient,
+		logger:     logger,
+		modelType:  modelType,
+		batchSize:  batchSize,
 	}
 }
 
 // Start initializes the batch handler and processes all batches for the client
 func (bh *BatchHandler) Start(ctx context.Context, notification *models.ConnectNotification) error {
 	bh.logger.WithFields(logrus.Fields{
-		"client_id":    notification.ClientId,
-		"dataset_name": bh.datasetName,
-		"batch_size":   bh.batchSize,
+		"client_id":  notification.ClientId,
+		"model_type": notification.ModelType,
+		"batch_size": bh.batchSize,
 	}).Info("Starting batch handler and processing client data")
 
 	// Process all batches for this client
@@ -64,6 +64,7 @@ func (bh *BatchHandler) processBatches(ctx context.Context, notification *models
 
 		bh.logger.WithFields(logrus.Fields{
 			"client_id":     notification.ClientId,
+			"model_type":    notification.ModelType,
 			"batch_index":   batchIndex,
 			"is_last_batch": batch.GetIsLastBatch(),
 			"data_size":     len(batch.GetData()),
@@ -73,6 +74,7 @@ func (bh *BatchHandler) processBatches(ctx context.Context, notification *models
 		if batch.GetIsLastBatch() {
 			bh.logger.WithFields(logrus.Fields{
 				"client_id":     notification.ClientId,
+				"model_type":    notification.ModelType,
 				"total_batches": batchIndex + 1,
 			}).Info("Completed data processing for client")
 			break
@@ -105,9 +107,9 @@ func (bh *BatchHandler) FetchBatch(ctx context.Context, batchIndex int32) (*data
 	defer cancel()
 
 	batchReq := &datasetpb.GetBatchRequest{
-		DatasetName: bh.datasetName,
-		BatchSize:   bh.batchSize,
-		BatchIndex:  batchIndex,
+		ModelType:  bh.modelType,
+		BatchSize:  bh.batchSize,
+		BatchIndex: batchIndex,
 	}
 
 	batch, err := bh.grpcClient.GetBatch(batchCtx, batchReq)
@@ -185,6 +187,7 @@ func (bh *BatchHandler) publishBatches(notification *models.ConnectNotification,
 		if err := bh.middleware.Publish(rk.key, rk.body, config.DATASET_EXCHANGE); err != nil {
 			bh.logger.WithFields(logrus.Fields{
 				"client_id":   notification.ClientId,
+				"model_type":  notification.ModelType,
 				"batch_index": batchIndex,
 				"routing_key": rk.key,
 				"batch_type":  rk.typ,

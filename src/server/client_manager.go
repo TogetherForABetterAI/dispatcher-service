@@ -16,7 +16,6 @@ type ClientManager struct {
 	datasetServiceAddr string
 	logger             *logrus.Logger
 	maxRetries         int
-	datasetName        string
 	batchSize          int32
 }
 
@@ -29,16 +28,12 @@ func NewClientManager(cfg config.GlobalConfig) *ClientManager {
 		datasetServiceAddr: cfg.GetGrpcConfig().GetDatasetServiceAddr(),
 		logger:             logger,
 		maxRetries:         cfg.GetMiddlewareConfig().GetMaxRetries(),
-		datasetName:        cfg.GetGrpcConfig().GetDatasetName(),
 		batchSize:          cfg.GetGrpcConfig().GetBatchSize(),
 	}
 }
 
 // HandleClient processes a client notification by fetching and publishing dataset batches
 func (c *ClientManager) HandleClient(ctx context.Context, notification *models.ConnectNotification) error {
-	c.logger.WithFields(logrus.Fields{
-		"client_id": notification.ClientId,
-	}).Info("Starting client data processing")
 
 	// Create RabbitMQ middleware using global config
 	middlewareInstance, err := middleware.NewMiddleware(config.Config.GetMiddlewareConfig())
@@ -59,6 +54,6 @@ func (c *ClientManager) HandleClient(ctx context.Context, notification *models.C
 	}
 
 	// Create and start batch handler
-	batchHandler := NewBatchHandler(middlewareInstance, grpcClient, c.datasetName, c.batchSize, c.logger)
+	batchHandler := NewBatchHandler(middlewareInstance, grpcClient, notification.ModelType, c.batchSize, c.logger)
 	return batchHandler.Start(ctx, notification)
 }

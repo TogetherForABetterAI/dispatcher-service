@@ -23,7 +23,6 @@ type GlobalConfig struct {
 
 type GrpcConfig struct {
 	datasetServiceAddr string
-	datasetName        string
 	batchSize          int32
 }
 
@@ -79,11 +78,6 @@ func NewConfig() (GlobalConfig, error) {
 		return GlobalConfig{}, fmt.Errorf("DATASET_SERVICE_ADDR environment variable is required")
 	}
 
-	// Get dataset name from environment
-	datasetName := os.Getenv("DATASET_NAME")
-	if datasetName == "" {
-		return GlobalConfig{}, fmt.Errorf("DATASET_NAME environment variable is required")
-	}
 
 	// Get batch size from environment
 	batchSizeStr := os.Getenv("BATCH_SIZE")
@@ -124,7 +118,6 @@ func NewConfig() (GlobalConfig, error) {
 		},
 		grpcConfig: &GrpcConfig{
 			datasetServiceAddr: datasetAddr,
-			datasetName:        datasetName,
 			batchSize:          int32(batchSize),
 		},
 	}, nil
@@ -185,10 +178,6 @@ func (m MiddlewareConfig) GetMaxRetries() int {
 // GrpcConfig getters
 func (g GrpcConfig) GetDatasetServiceAddr() string {
 	return g.datasetServiceAddr
-}
-
-func (g GrpcConfig) GetDatasetName() string {
-	return g.datasetName
 }
 
 func (g GrpcConfig) GetBatchSize() int32 {
