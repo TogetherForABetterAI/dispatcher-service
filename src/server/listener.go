@@ -79,6 +79,7 @@ func (l *Listener) HandleMessage(msg amqp.Delivery, shutdown chan struct{}, clie
 		"client_id":      notification.ClientId,
 		"inputs_format":  notification.InputsFormat,
 		"outputs_format": notification.OutputsFormat,
+		"model_type":     notification.ModelType,
 	}).Info("Processing new client notification")
 
 	// Create a context that can be cancelled on shutdown
