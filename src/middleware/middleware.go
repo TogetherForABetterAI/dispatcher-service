@@ -2,10 +2,10 @@ package middleware
 
 import (
 	"fmt"
-	"log"
 	"github.com/mlops-eval/data-dispatcher-service/src/config"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sirupsen/logrus"
+	"log"
 )
 
 type Middleware struct {
@@ -72,9 +72,9 @@ func NewMiddleware(cfg *config.MiddlewareConfig) (*Middleware, error) {
 func (m *Middleware) DeclareQueue(queueName string) error {
 	_, err := m.channel.QueueDeclare(
 		queueName, // name
-		true,      // durable
+		false,     // durable
 		false,     // delete when unused
-		false,      // exclusive
+		false,     // exclusive
 		false,     // no-wait
 		nil,       // arguments
 	)
@@ -85,7 +85,7 @@ func (m *Middleware) DeclareExchange(exchangeName string, exchangeType string) e
 	return m.channel.ExchangeDeclare(
 		exchangeName,
 		exchangeType,
-		true,  // durable
+		false, // durable
 		false, // autoDelete
 		false, // internal
 		false, // noWait
@@ -102,7 +102,6 @@ func (m *Middleware) BindQueue(queueName, exchangeName, routingKey string) error
 		nil,
 	)
 }
-
 
 func (m *Middleware) BasicConsume(queueName string, callback func(amqp.Delivery)) error {
 	msgs, err := m.channel.Consume(
