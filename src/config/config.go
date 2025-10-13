@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	DATASET_EXCHANGE      = "dataset-exchange"
-	CONNECTION_QUEUE_NAME = "data-dispatcher-connections"
+	DATASET_EXCHANGE      = "dataset_exchange"
+	CONNECTION_QUEUE_NAME = "data_dispatcher_connections_queue"
 )
 
 type GlobalConfig struct {
