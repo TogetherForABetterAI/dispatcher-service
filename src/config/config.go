@@ -122,15 +122,6 @@ func NewConfig() (GlobalConfig, error) {
 	}, nil
 }
 
-var Config GlobalConfig
-
-func init() {
-	config, err := NewConfig()
-	if err != nil {
-		panic(fmt.Sprintf("Failed to load configuration: %v", err))
-	}
-	Config = config
-}
 
 // GlobalConfig getters
 func (c GlobalConfig) GetLogLevel() string {
