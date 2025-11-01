@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -20,6 +22,9 @@ type Interface interface {
 	GetMiddlewareConfig() *MiddlewareConfig
 	GetGrpcConfig() *GrpcConfig
 	GetWorkerPoolSize() int
+	IsLeader() bool
+	GetMinThreshold() int
+	GetStartupTimeout() time.Duration
 }
 
 type GlobalConfig struct {
@@ -29,6 +34,9 @@ type GlobalConfig struct {
 	middlewareConfig *MiddlewareConfig
 	grpcConfig       *GrpcConfig
 	workerPoolSize   int
+	isLeader         bool
+	minThreshold     int
+	startupTimeout   time.Duration
 }
 
 type GrpcConfig struct {
@@ -123,11 +131,41 @@ func NewConfig() (GlobalConfig, error) {
 		workerPoolSize = parsed
 	}
 
+	// Get leader status from environment (optional with default)
+	isLeader := false
+	if leaderStr := os.Getenv("IS_LEADER"); leaderStr != "" {
+		isLeader = strings.ToLower(leaderStr) == "true"
+	}
+
+	// Get min client threshold from environment (optional with default)
+	minThreshold := 4
+	if thresholdStr := os.Getenv("MIN_CLIENT_THRESHOLD"); thresholdStr != "" {
+		parsed, err := strconv.Atoi(thresholdStr)
+		if err != nil {
+			return GlobalConfig{}, fmt.Errorf("MIN_CLIENT_THRESHOLD must be a valid integer: %w", err)
+		}
+		minThreshold = parsed
+	}
+
+	// Get startup timeout from environment (optional with default)
+	startupTimeoutSeconds := 300 // 5 minutes default
+	if timeoutStr := os.Getenv("STARTUP_TIMEOUT_SECONDS"); timeoutStr != "" {
+		parsed, err := strconv.Atoi(timeoutStr)
+		if err != nil {
+			return GlobalConfig{}, fmt.Errorf("STARTUP_TIMEOUT_SECONDS must be a valid integer: %w", err)
+		}
+		startupTimeoutSeconds = parsed
+	}
+	startupTimeout := time.Duration(startupTimeoutSeconds) * time.Second
+
 	return GlobalConfig{
 		logLevel:       logLevel,
 		serviceName:    "data-dispatcher-service",
 		consumerTag:    consumerTag,
 		workerPoolSize: workerPoolSize,
+		isLeader:       isLeader,
+		minThreshold:   minThreshold,
+		startupTimeout: startupTimeout,
 		middlewareConfig: &MiddlewareConfig{
 			host:       rabbitHost,
 			port:       int32(rabbitPort),
@@ -165,6 +203,18 @@ func (c GlobalConfig) GetGrpcConfig() *GrpcConfig {
 
 func (c GlobalConfig) GetWorkerPoolSize() int {
 	return c.workerPoolSize
+}
+
+func (c GlobalConfig) IsLeader() bool {
+	return c.isLeader
+}
+
+func (c GlobalConfig) GetMinThreshold() int {
+	return c.minThreshold
+}
+
+func (c GlobalConfig) GetStartupTimeout() time.Duration {
+	return c.startupTimeout
 }
 
 // MiddlewareConfig getters

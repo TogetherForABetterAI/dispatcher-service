@@ -18,10 +18,11 @@ func main() {
 	srv, err := server.NewServer(config)
 	if err != nil {
 		slog.Error("Failed to initialize server", "error", err)
-		return
+		os.Exit(1)
 	}
-
 	startServiceWithGracefulShutdown(srv, config)
+
+	slog.Info("Service shutdown complete. Exiting.")
 }
 
 func loadConfig() config.GlobalConfig {
@@ -33,7 +34,6 @@ func loadConfig() config.GlobalConfig {
 }
 
 func setupLogging(config config.GlobalConfig) {
-	// Set log level from configuration
 	logLevel := slog.LevelInfo
 	switch config.GetLogLevel() {
 	case "debug":
@@ -50,28 +50,39 @@ func setupLogging(config config.GlobalConfig) {
 	slog.SetDefault(logger)
 }
 
+// startServiceWithGracefulShutdown orchestrates the service lifecycle and handles graceful shutdown.
 func startServiceWithGracefulShutdown(srv *server.Server, config config.GlobalConfig) {
-	// Channel to listen for interrupt signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	osSignals := make(chan os.Signal, 1)
+	signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start server in a goroutine
+	// Channel for fatal server errors (crashes)
+	serverDone := make(chan error, 1)
 	go func() {
 		slog.Info("Starting service",
-			"service", config.GetServiceName())
-
-		if err := srv.Start(); err != nil {
-			log.Fatalf("Failed to start RabbitMQ server: %v", err)
-		}
-
-		slog.Info("RabbitMQ server started successfully")
+			"service", config.GetConsumerTag(),
+			"is_leader", config.IsLeader(),
+			"min_threshold", config.GetMinThreshold())
+		err := srv.Start()
+		serverDone <- err // Notify main when finished
 	}()
 
-	// Wait for interrupt signal
-	<-quit
-	slog.Info("Shutting down service...")
-
-	// Attempt graceful shutdown
-	srv.Stop()
-	slog.Info("Service exited gracefully")
+	select {
+	case err := <-serverDone:
+		if err != nil {
+			slog.Error("Service stopped unexpectedly due to an error", "error", err)
+			srv.Stop()
+			os.Exit(1)
+		}
+		slog.Warn("Service stopped unexpectedly without an error.")
+	case <-osSignals:
+		slog.Info("Received OS signal. Initiating graceful shutdown...")
+		srv.Stop()
+		<-serverDone
+		slog.Info("Service exited gracefully after receiving OS signal.")
+	case <-srv.ShutdownRequestChannel():
+		slog.Info("Received internal scale-in request. Initiating graceful shutdown...")
+		srv.Stop()
+		<-serverDone
+		slog.Info("Service exited gracefully after internal scale-in request.")
+	}
 }

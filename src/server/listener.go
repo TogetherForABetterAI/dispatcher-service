@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	// "time" // Ya no es necesario
 
 	"github.com/mlops-eval/data-dispatcher-service/src/config"
 
@@ -25,12 +26,18 @@ type Listener struct {
 	consumerTag   string
 	config        config.Interface
 	// Context and cancellation for graceful shutdown
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx     context.Context
+	cancel  context.CancelFunc
+	monitor *ReplicaMonitor
 }
 
 // NewListener creates a new listener with the provided client manager and logger
-func NewListener(clientManager *ClientManager, middleware *middleware.Middleware, cfg config.Interface) *Listener {
+func NewListener(
+	clientManager *ClientManager,
+	middleware *middleware.Middleware,
+	cfg config.Interface,
+	monitor *ReplicaMonitor,
+) *Listener {
 
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
@@ -51,21 +58,23 @@ func NewListener(clientManager *ClientManager, middleware *middleware.Middleware
 		config:        cfg,
 		ctx:           ctx,
 		cancel:        cancel,
+		monitor:       monitor,
 	}
 }
 
 // Start starts the listener and the worker pool
 func (l *Listener) Start() error {
+	l.logger.WithField("queue", l.queueName).Info("Starting listener...")
 
 	// Set Prefetch Count (QoS)
-	// We can't receive more than WorkerPoolSize unacknowledged messages
 	poolSize := l.config.GetWorkerPoolSize()
 	if err := l.middleware.SetQoS(poolSize); err != nil {
 		return fmt.Errorf("failed to set QoS: %w", err)
 	}
 
 	// Get messages channel
-	msgs, err := l.middleware.BasicConsume(l.queueName, l.config.GetConsumerTag())
+	l.consumerTag = l.config.GetConsumerTag()
+	msgs, err := l.middleware.BasicConsume(l.queueName, l.consumerTag)
 	if err != nil {
 		return fmt.Errorf("failed to start consuming messages: %w", err)
 	}
@@ -74,27 +83,23 @@ func (l *Listener) Start() error {
 		l.wg.Add(1)
 		go l.worker(i)
 	}
+	l.logger.Info("Worker pool started.")
 
 	for {
 		select {
 		case msg, ok := <-msgs:
 			if !ok {
 				l.logger.Warn("Message channel closed (likely due to connection loss)")
-				// Connection is lost, so no more messages will come
 				close(l.jobs)
 				return nil
 			}
-			// send the job to the worker pool.
-			// this will block if the jobs channel buffer is full
 			l.jobs <- msg
 
 		case <-l.ctx.Done():
 			l.logger.Info("Listener received shutdown signal. Stopping message consumption.")
-			// Graceful shutdown requested.
-			// Close the jobs channel to signal workers to finish.
 			close(l.jobs)
 			l.logger.Info("Jobs channel closed. Workers will finish processing remaining jobs.")
-			return nil
+			return l.ctx.Err() // Return context error
 		}
 	}
 }
@@ -102,17 +107,22 @@ func (l *Listener) Start() error {
 // worker is a long-lived goroutine that processes jobs
 func (l *Listener) worker(id int) {
 	defer l.wg.Done()
+	l.logger.WithField("worker_id", id).Info("Worker started")
 
-	// read from the jobs channel.
-	// this loop will automatically exit when the 'jobs' channel is closed and EMPTY.
 	for msg := range l.jobs {
+		l.logger.WithField("worker_id", id).Debug("Worker picked up a job")
+
+		l.monitor.NotifyWorkerStart()
 		l.processMessage(msg)
+		l.monitor.NotifyWorkerFinish()
+
+		l.logger.WithField("worker_id", id).Debug("Worker finished a job")
 	}
 
 	l.logger.WithField("worker_id", id).Info("Worker shutting down.")
 }
 
-// processMessage processes individual client notification messages
+// processMessage processes a single client notification message
 func (l *Listener) processMessage(msg amqp.Delivery) {
 	// Parse the notification
 	var notification models.ConnectNotification
@@ -159,10 +169,8 @@ func (l *Listener) processMessage(msg amqp.Delivery) {
 
 // Stop initiates a graceful shutdown
 func (l *Listener) Stop() {
-	l.logger.Info("Listener stopping - signaling message consumption to stop.")
-
+	l.logger.Info("Listener stopping - signaling workers to stop.")
 	l.cancel()
-
 	l.wg.Wait()
 	l.logger.Info("Listener stopped successfully. All workers finished.")
 }
