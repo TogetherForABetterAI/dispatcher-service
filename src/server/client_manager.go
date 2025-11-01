@@ -23,7 +23,7 @@ type ClientManager struct {
 }
 
 // NewClientManager creates a new client manager
-func NewClientManager(cfg config.GlobalConfig, conn *amqp.Connection, middleware *middleware.Middleware) *ClientManager {
+func NewClientManager(cfg config.Interface, conn *amqp.Connection, middleware *middleware.Middleware) *ClientManager {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
 

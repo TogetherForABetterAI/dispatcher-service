@@ -2,8 +2,6 @@ package server
 
 import (
 	"fmt"
-	"sync"
-
 	"github.com/mlops-eval/data-dispatcher-service/src/config"
 	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
 	"github.com/sirupsen/logrus"
@@ -14,13 +12,11 @@ type Server struct {
 	middleware *middleware.Middleware
 	logger     *logrus.Logger
 	listener   *Listener
-	clientWg   sync.WaitGroup // Track active client goroutines
-	shutdown   chan struct{}  // Signal for graceful shutdown
-	config     config.GlobalConfig
+	config     config.Interface
 }
 
 // NewServer creates a new RabbitMQ server for client notifications
-func NewServer(cfg config.GlobalConfig) (*Server, error) {
+func NewServer(cfg config.Interface) (*Server, error) {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
 
@@ -33,14 +29,13 @@ func NewServer(cfg config.GlobalConfig) (*Server, error) {
 	// Create client manager with shared connection
 	clientManager := NewClientManager(cfg, middleware.Conn(), middleware)
 
-	// Create listener (queueName is now set in constructor)
-	listener := NewListener(clientManager, middleware, logger)
+	// Create listener
+	listener := NewListener(clientManager, middleware, cfg)
 
 	server := &Server{
 		middleware: middleware,
 		logger:     logger,
 		listener:   listener,
-		shutdown:   make(chan struct{}),
 		config:     cfg,
 	}
 
@@ -55,9 +50,9 @@ func NewServer(cfg config.GlobalConfig) (*Server, error) {
 
 // Start starts consuming client notification messages from the existing queue
 func (s *Server) Start() error {
-	// Start the listener to consume messages and spawn goroutines
-	// for each connection packet received
-	err := s.listener.Start(s.shutdown, &s.clientWg)
+	// Start the listener to consume messages 
+	// spawn goroutines for each connection packet received
+	err := s.listener.Start()
 	if err != nil {
 		return fmt.Errorf("failed to start consuming: %w", err)
 	}
@@ -68,16 +63,14 @@ func (s *Server) Start() error {
 // Stop gracefully stops the server and waits for all client goroutines to finish
 func (s *Server) Stop() {
 	s.logger.Info("Initiating graceful server shutdown")
-	
-	// Close middleware (RabbitMQ connection and channel)
-	s.middleware.Close()
-	
+
+	s.middleware.StopConsuming(s.listener.GetConsumerTag())
+
 	// Signal all client goroutines to stop
-	close(s.shutdown)
+	s.listener.Stop()
 
-	// Wait for all client goroutines to finish
-	s.clientWg.Wait()
-
+	// Close channel and connection
+	s.middleware.Close()
 
 	s.logger.Info("Server shutdown completed")
 }
