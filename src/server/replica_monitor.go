@@ -130,7 +130,7 @@ func (m *ReplicaMonitor) NotifyWorkerFinish() {
 			"threshold":      m.minThreshold,
 		}).Warn("Replica Monitor: Active workers FELL BELOW threshold. Requesting shutdown.")
 
-		// Request shutdown instead of calling it directly
+		// Request shutdown 
 		go m.requestShutdown()
 	}
 }
@@ -144,7 +144,6 @@ func (m *ReplicaMonitor) requestShutdown() {
 	}
 }
 
-// Stop (No changes, still called by Server.Stop())
 func (m *ReplicaMonitor) Stop() {
 	m.logger.Info("Replica Monitor: Stopping monitor.")
 	m.cancel()  // Signals the timer goroutine
