@@ -80,10 +80,11 @@ func (l *Listener) Start() error {
 		return fmt.Errorf("failed to start consuming messages: %w", err)
 	}
 
-	for i := range poolSize {
+	for i := 0; i < poolSize; i++ {
 		l.wg.Add(1)
 		go l.worker(i)
 	}
+
 	l.logger.Info("Worker pool started.")
 
 	for {
