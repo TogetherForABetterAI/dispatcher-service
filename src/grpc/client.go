@@ -3,7 +3,8 @@ package grpc
 import (
 	"context"
 	"fmt"
-	datasetpb "github.com/mlops-eval/data-dispatcher-service/src/pb"
+
+	datasetpb "github.com/data-dispatcher-service/src/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

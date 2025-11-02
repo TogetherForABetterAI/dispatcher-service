@@ -7,11 +7,12 @@
 package pb
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -540,7 +541,7 @@ const file_dataset_service_proto_rawDesc = "" +
 	"\rStreamBatches\x12%.dataset_service.StreamBatchesRequest\x1a!.dataset_service.DataBatchLabeled0\x01\x12O\n" +
 	"\bGetBatch\x12 .dataset_service.GetBatchRequest\x1a!.dataset_service.DataBatchLabeled\x12V\n" +
 	"\x0eGetDatasetInfo\x12&.dataset_service.GetDatasetInfoRequest\x1a\x1c.dataset_service.DatasetInfo\x12X\n" +
-	"\vHealthCheck\x12#.dataset_service.HealthCheckRequest\x1a$.dataset_service.HealthCheckResponseB6Z4github.com/mlops-eval/data-dispatcher-service/src/pbb\x06proto3"
+	"\vHealthCheck\x12#.dataset_service.HealthCheckRequest\x1a$.dataset_service.HealthCheckResponseB6Z4github.com/data-dispatcher-service/src/pbb\x06proto3"
 
 var (
 	file_dataset_service_proto_rawDescOnce sync.Once

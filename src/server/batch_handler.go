@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mlops-eval/data-dispatcher-service/src/config"
-	"github.com/mlops-eval/data-dispatcher-service/src/grpc"
-	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
-	"github.com/mlops-eval/data-dispatcher-service/src/models"
-	datasetpb "github.com/mlops-eval/data-dispatcher-service/src/pb"
+	"github.com/data-dispatcher-service/src/config"
+	"github.com/data-dispatcher-service/src/grpc"
+	"github.com/data-dispatcher-service/src/middleware"
+	"github.com/data-dispatcher-service/src/models"
+	datasetpb "github.com/data-dispatcher-service/src/pb"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
