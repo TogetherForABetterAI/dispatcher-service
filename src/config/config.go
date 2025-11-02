@@ -11,13 +11,17 @@ import (
 )
 
 const (
-	DATASET_EXCHANGE      = "dataset_exchange"
-	CONNECTION_QUEUE_NAME = "data_dispatcher_connections_queue"
+	DATASET_EXCHANGE       = "dataset_exchange"
+	CONNECTION_QUEUE_NAME  = "data_dispatcher_connections_queue"
+	SCALABILITY_QUEUE_NAME = "scalability_queue"
+	SCALABILITY_EXCHANGE   = "scalability_exchange"
+	REPLICA_NAME           = "dispatcher"
+	RESET_CAPACITY = 0.7
 )
 
 type Interface interface {
 	GetLogLevel() string
-	GetServiceName() string
+	GetReplicaName() string
 	GetConsumerTag() string
 	GetMiddlewareConfig() *MiddlewareConfig
 	GetGrpcConfig() *GrpcConfig
@@ -29,7 +33,7 @@ type Interface interface {
 
 type GlobalConfig struct {
 	logLevel         string
-	serviceName      string
+	replicaName      string
 	consumerTag      string
 	middlewareConfig *MiddlewareConfig
 	grpcConfig       *GrpcConfig
@@ -160,7 +164,7 @@ func NewConfig() (GlobalConfig, error) {
 
 	return GlobalConfig{
 		logLevel:       logLevel,
-		serviceName:    "data-dispatcher-service",
+		replicaName:    REPLICA_NAME,
 		consumerTag:    consumerTag,
 		workerPoolSize: workerPoolSize,
 		isLeader:       isLeader,
@@ -185,8 +189,8 @@ func (c GlobalConfig) GetLogLevel() string {
 	return c.logLevel
 }
 
-func (c GlobalConfig) GetServiceName() string {
-	return c.serviceName
+func (c GlobalConfig) GetReplicaName() string {
+	return c.replicaName
 }
 
 func (c GlobalConfig) GetConsumerTag() string {
