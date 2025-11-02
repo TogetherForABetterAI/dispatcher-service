@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+
 	// "time" // Ya no es necesario
 
-	"github.com/mlops-eval/data-dispatcher-service/src/config"
+	"github.com/data-dispatcher-service/src/config"
 
-	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
-	"github.com/mlops-eval/data-dispatcher-service/src/models"
+	"github.com/data-dispatcher-service/src/middleware"
+	"github.com/data-dispatcher-service/src/models"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sirupsen/logrus"
 )
