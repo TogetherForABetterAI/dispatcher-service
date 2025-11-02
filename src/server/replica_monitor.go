@@ -9,8 +9,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-
-
 type ReplicaMonitor struct {
 	logger              *logrus.Logger
 	config              config.Interface
@@ -81,10 +79,15 @@ func (m *ReplicaMonitor) Start() {
 			m.stateMutex.Unlock()
 
 		case <-m.ctx.Done():
-			// Graceful shutdown requested
-			m.logger.Debug("Replica Monitor: Shutdown requested. Stopping startup timer.")
+			// try to stop the timer cause shutdown is requested
 			if !m.startupTimer.Stop() {
-				<-m.startupTimer.C // just for cleanup
+				// if Stop() returned false,
+				// means the timer has already fired
+				// or is in the process of firing
+				select {
+				case <-m.startupTimer.C: // drain the channel
+				default: // do nothing and continue
+				}
 			}
 			return
 		}
@@ -99,6 +102,7 @@ func (m *ReplicaMonitor) NotifyWorkerStart() {
 	m.activeWorkers++
 	m.logger.WithField("active_workers", m.activeWorkers).Debug("Replica Monitor: Worker started a task")
 
+	// leader replica must not monitor min threshold
 	if !m.isLeader && !m.minThresholdMet && m.activeWorkers >= m.minThreshold {
 		m.logger.WithFields(logrus.Fields{
 			"active_workers": m.activeWorkers,
@@ -107,16 +111,21 @@ func (m *ReplicaMonitor) NotifyWorkerStart() {
 
 		m.minThresholdMet = true
 		if m.startupTimer != nil {
+			// try to stop the timer cause we reached the threshold
 			if !m.startupTimer.Stop() {
+				// if Stop() returned false,
+				// means the timer has already fired
+				// or is in the process of firing
 				select {
-				case <-m.startupTimer.C:
-				default:
+				case <-m.startupTimer.C: // drain the channel
+				default: // do nothing and continue
 				}
 			}
 		}
 	}
 
-	if !m.isLeader && !m.maxThresholdReached && m.activeWorkers == m.maxThreshold {
+	// monitor max threshold
+	if !m.maxThresholdReached && m.activeWorkers == m.maxThreshold {
 		m.logger.WithFields(logrus.Fields{
 			"active_workers": m.activeWorkers,
 			"threshold":      m.maxThreshold,
@@ -138,6 +147,7 @@ func (m *ReplicaMonitor) NotifyWorkerFinish() {
 	m.activeWorkers--
 	m.logger.WithField("active_workers", m.activeWorkers).Debug("Replica Monitor: Worker finished a task")
 
+	// leader replica must not monitor min threshold
 	if !m.isLeader && !m.minThresholdMet && m.activeWorkers < m.minThreshold {
 		m.logger.WithFields(logrus.Fields{
 			"active_workers": m.activeWorkers,
@@ -148,16 +158,17 @@ func (m *ReplicaMonitor) NotifyWorkerFinish() {
 		go m.orchestrator.RequestShutdown()
 	}
 
-	// if we had requested scale-up before, but load has dropped
-	// we reset the flag to allow future scale-up requests
-	// but we use a 90% threshold to avoid rapid toggling
-	// e.g if max was 10, we reset when load drops to 7 capacity
+	// if we had requested scale-up before and load has dropped to "m.maxThreshold - 1" (for example),
+	// we reset the flag to allow future scale-up requests BUT...
+	// we use a RESET_CAPACITY threshold to avoid rapid toggling
+	// e.g if "m.maxThreshold" was 10 and "RESET_CAPACITY" was 0.7,
+	// we reset the flag when load drops to 7 capacity or fewer
 	resetThreshold := int(float64(m.maxThreshold) * config.RESET_CAPACITY)
 	if m.maxThresholdReached && m.activeWorkers <= resetThreshold {
 		m.logger.WithFields(logrus.Fields{
 			"active_workers": m.activeWorkers,
 			"reset_at":       resetThreshold,
-		}).Info("Replica Monitor: Load dropped below 90%. Re-enabling max threshold trigger.")
+		}).Info("Replica Monitor: Active workers DROPPED BELOW reset threshold. Allowing future scale-up requests.")
 		m.maxThresholdReached = false
 	}
 }
