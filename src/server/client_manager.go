@@ -19,12 +19,17 @@ type ClientManager struct {
 	maxRetries         int
 	batchSize          int32
 	conn               *amqp.Connection
-	middleware         *middleware.Middleware
+	middleware         middleware.MiddlewareInterface
 	batchHandler       *BatchHandler
 }
 
+type ClientManagerInterface interface {
+	HandleClient(notification *models.ConnectNotification) error
+	Stop()
+}
+
 // NewClientManager creates a new client manager
-func NewClientManager(cfg config.Interface, conn *amqp.Connection, middleware *middleware.Middleware) *ClientManager {
+func NewClientManager(cfg config.Interface, mw middleware.MiddlewareInterface, clientID string) *ClientManager {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
 
@@ -33,9 +38,10 @@ func NewClientManager(cfg config.Interface, conn *amqp.Connection, middleware *m
 		logger:             logger,
 		maxRetries:         cfg.GetMiddlewareConfig().GetMaxRetries(),
 		batchSize:          cfg.GetGrpcConfig().GetBatchSize(),
-		conn:               conn,
-		middleware:         middleware,
+		conn:               mw.Conn(),
+		middleware:         mw,
 		batchHandler:       nil,
+		clientID:           clientID,
 	}
 }
 
@@ -48,8 +54,6 @@ func (c *ClientManager) HandleClient(notification *models.ConnectNotification) e
 		return fmt.Errorf("failed to create RabbitMQ publisher: %w", err)
 	}
 	defer publisher.Close()
-
-	c.clientID = notification.ClientId
 
 	// Create and bind queues for this client
 	if err := c.createAndBindClientQueues(notification.ClientId); err != nil {
