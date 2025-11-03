@@ -16,6 +16,9 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// this type definition can be used if you want to inject different client manager implementations
+type ClientManagerFactory func(config.Interface, middleware.MiddlewareInterface, string) ClientManagerInterface
+
 // Listener handles listening for new client notifications and processing them
 type Listener struct {
 	middleware  middleware.MiddlewareInterface
@@ -27,12 +30,14 @@ type Listener struct {
 	config      config.Interface
 
 	clientsMutex  sync.RWMutex
-	activeClients map[string]*ClientManager
+	activeClients map[string]ClientManagerInterface
 
 	// Context and cancellation for graceful shutdown
 	ctx     context.Context
 	cancel  context.CancelFunc
 	monitor ReplicaMonitorInterface
+
+	clientManagerFactory ClientManagerFactory
 }
 
 // NewListener creates a new listener with the provided client manager and logger
@@ -40,6 +45,7 @@ func NewListener(
 	middleware middleware.MiddlewareInterface,
 	cfg config.Interface,
 	monitor ReplicaMonitorInterface,
+	factory ClientManagerFactory,
 ) *Listener {
 
 	logger := logrus.New()
@@ -53,14 +59,16 @@ func NewListener(
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Listener{
-		middleware: middleware,
-		logger:     logger,
-		queueName:  config.CONNECTION_QUEUE_NAME,
-		jobs:       jobs,
-		config:     cfg,
-		ctx:        ctx,
-		cancel:     cancel,
-		monitor:    monitor,
+		middleware:           middleware,
+		logger:               logger,
+		queueName:            config.CONNECTION_QUEUE_NAME,
+		jobs:                 jobs,
+		config:               cfg,
+		ctx:                  ctx,
+		cancel:               cancel,
+		monitor:              monitor,
+		activeClients:        make(map[string]ClientManagerInterface),
+		clientManagerFactory: factory,
 	}
 }
 
@@ -172,16 +180,7 @@ func (l *Listener) processMessage(msg amqp.Delivery) {
 
 	clientID := notification.ClientId
 
-	// Type assertion to get the concrete Middleware for ClientManager
-	// This is necessary because ClientManager needs the concrete type
-	concreteMiddleware, ok := l.middleware.(*middleware.Middleware)
-	if !ok {
-		l.logger.Error("Failed to type assert middleware to concrete type")
-		msg.Nack(false, false)
-		return
-	}
-
-	clientManager := NewClientManager(l.config, l.middleware.Conn(), concreteMiddleware)
+	clientManager := l.clientManagerFactory(l.config, l.middleware, clientID)
 	l.clientsMutex.Lock()
 	l.activeClients[clientID] = clientManager
 	l.clientsMutex.Unlock()

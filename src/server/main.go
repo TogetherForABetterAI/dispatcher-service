@@ -25,7 +25,6 @@ type Server struct {
 	config          config.Interface
 	shutdownRequest chan struct{}         // Channel to receive the shutdown request
 	shutdownOnce    sync.Once             // Ensures Stop() is called only once
-	closeOnce       sync.Once             // ensure middleware connection is closed only once
 	scalePublisher  *middleware.Publisher // Publisher for scaling requests
 }
 
@@ -58,7 +57,11 @@ func NewServer(cfg config.Interface) (*Server, error) {
 
 	monitor := NewReplicaMonitor(cfg, logger, server)
 
-	listener := NewListener(mw, cfg, monitor)
+	realFactory := func(cfg config.Interface, mw middleware.MiddlewareInterface, clientID string) ClientManagerInterface {
+		return NewClientManager(cfg, mw, clientID)
+	}
+
+	listener := NewListener(mw, cfg, monitor, realFactory)
 
 	server.monitor = monitor
 	server.listener = listener
@@ -129,8 +132,7 @@ func (s *Server) ShutdownClients(interrupt bool) {
 		// on how long we wait for clients to finish.
 		s.listener.InterruptClients(false)
 	}
-	s.closeOnce.Do(func() {
-		s.middleware.Close()
-	})
+	s.middleware.Close()
+
 	s.logger.Info("Server stopped consuming, all clients finished.")
 }
