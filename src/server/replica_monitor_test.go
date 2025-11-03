@@ -48,7 +48,7 @@ func newFakeOrchestrator() *fakeOrchestrator {
 	}
 }
 
-func (f *fakeOrchestrator) RequestShutdown() <-chan struct{} {
+func (f *fakeOrchestrator) RequestShutdown() {
 	f.mu.Lock()
 	f.shutdownCalls++
 	f.mu.Unlock()
@@ -57,8 +57,6 @@ func (f *fakeOrchestrator) RequestShutdown() <-chan struct{} {
 	case f.shutdownNotifyChan <- struct{}{}:
 	default:
 	}
-
-	return f.shutdownChan
 }
 
 func (f *fakeOrchestrator) RequestScaleUp() {
