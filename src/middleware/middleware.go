@@ -106,7 +106,10 @@ func (m *Middleware) BindQueue(queueName, exchangeName, routingKey string) error
 // StopConsuming cancels all consumers to stop receiving new messages
 func (m *Middleware) StopConsuming(consumerTag string) error {
 	if m.channel != nil {
-		m.channel.Cancel(consumerTag, false)
+		if err := m.channel.Cancel(consumerTag, false); err != nil {
+			m.logger.WithError(err).Warnf("Failed to cancel consumer '%s'", consumerTag)
+			return err
+		}
 	}
 	return nil
 }
