@@ -25,6 +25,7 @@ type Server struct {
 	config          config.Interface
 	shutdownRequest chan struct{}         // Channel to receive the shutdown request
 	shutdownOnce    sync.Once             // Ensures Stop() is called only once
+	closeOnce       sync.Once             // ensure middleware connection is closed only once
 	scalePublisher  *middleware.Publisher // Publisher for scaling requests
 }
 
@@ -37,8 +38,6 @@ func NewServer(cfg config.Interface) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create middleware: %w", err)
 	}
-
-	clientManager := NewClientManager(cfg, mw.Conn(), mw)
 
 	shutdownReqChan := make(chan struct{}, 1)
 
@@ -59,7 +58,7 @@ func NewServer(cfg config.Interface) (*Server, error) {
 
 	monitor := NewReplicaMonitor(cfg, logger, server)
 
-	listener := NewListener(clientManager, mw, cfg, monitor)
+	listener := NewListener(mw, cfg, monitor)
 
 	server.monitor = monitor
 	server.listener = listener
@@ -119,20 +118,19 @@ func (s *Server) RequestScaleUp() {
 
 // ShutdownClients initiates the server shutdown
 func (s *Server) ShutdownClients(interrupt bool) {
-	// "s.shutdownOnce.Do" ensures ShutdownClients() is called only once
-	s.shutdownOnce.Do(func() {
-		s.logger.Info("Initiating server shutdown...")
-		s.middleware.StopConsuming(s.listener.GetConsumerTag())
-		s.monitor.Stop()
-		if interrupt {
-			// interrupts ongoing processing
-			s.listener.InterruptClients(true)
-		} else {
-			// If desired, a timeout could be added to set a limit
-			// on how long we wait for clients to finish.
-			s.listener.InterruptClients(false)
-		}
+	s.logger.Info("Initiating server shutdown...")
+	s.middleware.StopConsuming(s.listener.GetConsumerTag())
+	s.monitor.Stop()
+	if interrupt {
+		// interrupts ongoing processing
+		s.listener.InterruptClients(true)
+	} else {
+		// If desired, a timeout could be added to set a limit
+		// on how long we wait for clients to finish.
+		s.listener.InterruptClients(false)
+	}
+	s.closeOnce.Do(func() {
 		s.middleware.Close()
-		s.logger.Info("Server stopped consuming, all clients finished.")
 	})
+	s.logger.Info("Server stopped consuming, all clients finished.")
 }
