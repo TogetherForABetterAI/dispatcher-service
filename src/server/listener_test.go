@@ -17,6 +17,82 @@ import (
 )
 
 // ============================================================================
+// TEST HELPERS
+// ============================================================================
+
+// listenerTestSetup holds common test dependencies.
+// The mockClientManager field is optional and only populated by setupBasicListener.
+type listenerTestSetup struct {
+	mockMiddleware *mocks.MockMiddleware
+	mockMonitor    *mocks.MockReplicaMonitor
+	cfg            *mocks.MockConfig
+	listener       *Listener
+}
+
+// setupListenerWithFactory creates a listener with a custom factory for testing.
+// Use this when you need full control over the ClientManager creation.
+func setupListenerWithFactory(t *testing.T, cfg *mocks.MockConfig, factory ClientManagerFactory) *listenerTestSetup {
+	t.Helper()
+
+	mockMiddleware := new(mocks.MockMiddleware)
+	mockMonitor := new(mocks.MockReplicaMonitor)
+
+	listener := NewListener(mockMiddleware, cfg, mockMonitor, factory)
+
+	return &listenerTestSetup{
+		mockMiddleware: mockMiddleware,
+		mockMonitor:    mockMonitor,
+		cfg:            cfg,
+		listener:       listener,
+	}
+}
+
+// simulateWorker simulates a worker that responds to context cancellation.
+// Returns a channel that will be closed when the worker exits.
+func simulateWorker(t *testing.T, listener *Listener) chan struct{} {
+	t.Helper()
+
+	workerDone := make(chan struct{})
+	listener.wg.Add(1)
+	go func() {
+		defer listener.wg.Done()
+		select {
+		case <-listener.ctx.Done():
+			close(workerDone)
+			return
+		case <-time.After(5 * time.Second):
+			t.Error("Worker should have been cancelled")
+		}
+	}()
+
+	return workerDone
+}
+
+// waitForChannel waits for a channel to close or times out with an error.
+func waitForChannel(t *testing.T, ch <-chan struct{}, timeout time.Duration, errorMsg string) {
+	t.Helper()
+
+	select {
+	case <-ch:
+		// Channel closed as expected
+	case <-time.After(timeout):
+		t.Error(errorMsg)
+	}
+}
+
+// assertContextCancelled verifies that a context has been cancelled.
+func assertContextCancelled(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	select {
+	case <-ctx.Done():
+		// Context cancelled as expected
+	default:
+		t.Error("Expected context to be cancelled")
+	}
+}
+
+// ============================================================================
 // TESTS
 // ============================================================================
 
@@ -142,18 +218,22 @@ func TestStart(t *testing.T) {
 			errChan <- listener.Start()
 		}()
 
-		// Give time for workers to start
-		time.Sleep(50 * time.Millisecond)
+		// Wait for workers to start using select with timeout
+		// we could add channels that confirm that workers have started to eliminate idle waiting.
+		time.Sleep(100 * time.Millisecond)
 
 		// Trigger shutdown
 		listener.InterruptClients(false)
 
-		// Wait for Start to return
-		err := <-errChan
+		// Wait for Start to return with timeout
+		select {
+		case err := <-errChan:
+			require.Error(t, err)
+			assert.Equal(t, context.Canceled, err)
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("Start() did not return in time")
+		}
 
-		// Assert
-		require.Error(t, err)
-		assert.Equal(t, context.Canceled, err)
 		mockMiddleware.AssertExpectations(t)
 	})
 }
@@ -174,7 +254,7 @@ func TestWorker(t *testing.T) {
 
 		listener := NewListener(mockMiddleware, cfg, mockMonitor, mockFactory)
 
-		// Set up expectations
+		// Set up expectations - message channel that we control
 		msgChan := make(chan amqp.Delivery, 1)
 		mockMiddleware.On("SetQoS", 1).Return(nil)
 		mockMiddleware.On("BasicConsume", config.CONNECTION_QUEUE_NAME, "test-tag").Return((<-chan amqp.Delivery)(msgChan), nil)
@@ -187,22 +267,33 @@ func TestWorker(t *testing.T) {
 		mockDelivery := &mocks.MockDelivery{Body: []byte(validMsg)}
 		mockDelivery.On("Ack", uint64(1), false).Return(nil)
 
-		// Act
+		// Act - start the listener in a goroutine
+		startDone := make(chan struct{})
 		go func() {
 			listener.Start()
+			close(startDone)
 		}()
 
-		// Give time for workers to start
-		time.Sleep(50 * time.Millisecond)
+		// Wait for workers to be ready using select with timeout
+		// we could add channels that confirm that workers have started to eliminate idle waiting.
+		time.Sleep(100 * time.Millisecond)
 
-		// Send message to jobs channel
-		listener.jobs <- mockDelivery.ToDelivery()
+		// Send message through the proper msgChan (not directly to jobs)
+		msgChan <- mockDelivery.ToDelivery()
 
-		// Close jobs channel to signal workers to finish
-		close(listener.jobs)
+		// Wait for message to be processed using select with timeout
+		time.Sleep(200 * time.Millisecond)
 
-		// Wait for workers to finish
-		listener.wg.Wait()
+		// Close the msgChan to signal end of messages (like RabbitMQ disconnect)
+		close(msgChan)
+
+		// Wait for Start to finish with timeout
+		select {
+		case <-startDone:
+			// Start finished as expected
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("Start() did not finish in time")
+		}
 
 		// Assert
 		mockMonitor.AssertExpectations(t)
@@ -384,32 +475,30 @@ func TestInterruptClients(t *testing.T) {
 	t.Parallel()
 	t.Run("interrupt=false does not call Stop on clients", func(t *testing.T) {
 		// Arrange
-		mockMiddleware := new(mocks.MockMiddleware)
-		mockMonitor := new(mocks.MockReplicaMonitor)
 		cfg := &mocks.MockConfig{WorkerPoolSize: 1, ConsumerTag: "test-tag"}
-
 		mockClientManager := new(mocks.MockClientManager)
 		mockFactory := func(cfg config.Interface, mw middleware.MiddlewareInterface, clientID string) ClientManagerInterface {
 			return mockClientManager
 		}
 
-		listener := NewListener(mockMiddleware, cfg, mockMonitor, mockFactory)
+		setup := setupListenerWithFactory(t, cfg, mockFactory)
 
 		// Add a client to activeClients
-		listener.clientsMutex.Lock()
-		listener.activeClients["test-client"] = mockClientManager
-		listener.clientsMutex.Unlock()
+		setup.listener.clientsMutex.Lock()
+		setup.listener.activeClients["test-client"] = mockClientManager
+		setup.listener.clientsMutex.Unlock()
+
+		// Simulate a worker running
+		workerDone := simulateWorker(t, setup.listener)
 
 		// Act
-		listener.InterruptClients(false)
+		setup.listener.InterruptClients(false)
 
 		// Assert
-		select {
-		case <-listener.ctx.Done():
-			// Context is cancelled as expected
-		default:
-			t.Error("Expected context to be cancelled")
-		}
+		assertContextCancelled(t, setup.listener.ctx)
+
+		// Verify worker was waited for
+		waitForChannel(t, workerDone, 200*time.Millisecond, "Expected InterruptClients to wait for worker")
 
 		// Stop should NOT have been called
 		mockClientManager.AssertNotCalled(t, "Stop")
@@ -417,38 +506,48 @@ func TestInterruptClients(t *testing.T) {
 
 	t.Run("interrupt=true calls Stop on all active clients", func(t *testing.T) {
 		// Arrange
-		mockMiddleware := new(mocks.MockMiddleware)
-		mockMonitor := new(mocks.MockReplicaMonitor)
 		cfg := &mocks.MockConfig{WorkerPoolSize: 1, ConsumerTag: "test-tag"}
-
 		mockClientManager1 := new(mocks.MockClientManager)
 		mockClientManager2 := new(mocks.MockClientManager)
 		mockFactory := func(cfg config.Interface, mw middleware.MiddlewareInterface, clientID string) ClientManagerInterface {
 			return new(mocks.MockClientManager)
 		}
 
-		listener := NewListener(mockMiddleware, cfg, mockMonitor, mockFactory)
+		setup := setupListenerWithFactory(t, cfg, mockFactory)
 
 		// Add clients to activeClients
-		listener.clientsMutex.Lock()
-		listener.activeClients["test-client-1"] = mockClientManager1
-		listener.activeClients["test-client-2"] = mockClientManager2
-		listener.clientsMutex.Unlock()
+		setup.listener.clientsMutex.Lock()
+		setup.listener.activeClients["test-client-1"] = mockClientManager1
+		setup.listener.activeClients["test-client-2"] = mockClientManager2
+		setup.listener.clientsMutex.Unlock()
 
 		// Set expectations
 		mockClientManager1.On("Stop").Return().Once()
 		mockClientManager2.On("Stop").Return().Once()
 
+		// Simulate two workers running
+		worker1Done := simulateWorker(t, setup.listener)
+		worker2Done := simulateWorker(t, setup.listener)
+
 		// Act
-		listener.InterruptClients(true)
+		interruptDone := make(chan struct{})
+		go func() {
+			setup.listener.InterruptClients(true)
+			close(interruptDone)
+		}()
+
+		// Give a moment for context cancellation to propagate
+		time.Sleep(10 * time.Millisecond)
 
 		// Assert
-		select {
-		case <-listener.ctx.Done():
-			// Context is cancelled as expected
-		default:
-			t.Error("Expected context to be cancelled")
-		}
+		assertContextCancelled(t, setup.listener.ctx)
+
+		// Verify both workers were waited for
+		waitForChannel(t, worker1Done, 200*time.Millisecond, "Worker 1 should have finished")
+		waitForChannel(t, worker2Done, 200*time.Millisecond, "Worker 2 should have finished")
+
+		// Verify InterruptClients waited for all workers
+		waitForChannel(t, interruptDone, 200*time.Millisecond, "InterruptClients should have finished after workers")
 
 		// Stop should have been called on both clients
 		mockClientManager1.AssertExpectations(t)
