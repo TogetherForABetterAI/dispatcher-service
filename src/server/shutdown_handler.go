@@ -58,7 +58,6 @@ func NewShutdownHandler(
 
 // HandleShutdown orchestrates graceful shutdown based on different shutdown sources
 func (h *ShutdownHandler) HandleShutdown(serverDone chan error, osSignals chan os.Signal) error {
-	osShutdown := make(chan struct{}, 1)
 
 	// Goroutine to handle OS signals
 	go func() {
@@ -68,17 +67,12 @@ func (h *ShutdownHandler) HandleShutdown(serverDone chan error, osSignals chan o
 		}
 		slog.Info("Received OS signal. Initiating shutdown...", "signal", sig)
 		h.ShutdownClients(true) // interrupt ongoing processing
-		osShutdown <- struct{}{}
 	}()
 
 	// Wait for one of three shutdown triggers
 	select {
 	case err := <-serverDone:
 		return h.handleServerError(err)
-
-	case <-osShutdown:
-		return h.handleOSShutdown(serverDone)
-
 	case <-h.shutdownRequest:
 		return h.handleInternalShutdown(serverDone)
 	}
@@ -95,17 +89,6 @@ func (h *ShutdownHandler) handleServerError(err error) error {
 	return nil
 }
 
-// handleOSShutdown handles shutdown triggered by OS signal
-func (h *ShutdownHandler) handleOSShutdown(serverDone chan error) error {
-	err := <-serverDone // wait for server to finish
-	if err != nil {
-		slog.Error("Service encountered an error during OS signal shutdown", "error", err)
-		return err
-	}
-	slog.Info("Service exited gracefully after receiving OS signal.")
-	return nil
-}
-
 // handleInternalShutdown handles shutdown triggered by internal scale-in request
 func (h *ShutdownHandler) handleInternalShutdown(serverDone chan error) error {
 	slog.Info("Received internal scale-in request. Initiating graceful shutdown...")
@@ -114,7 +97,7 @@ func (h *ShutdownHandler) handleInternalShutdown(serverDone chan error) error {
 	if err != nil {
 		slog.Error("Service encountered an error during internal shutdown", "error", err)
 		return err
-	} 
+	}
 	slog.Info("Service exited gracefully after internal scale-in request.")
 	return nil
 }
