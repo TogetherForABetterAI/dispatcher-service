@@ -78,7 +78,7 @@ func NewMiddleware(cfg *config.MiddlewareConfig) (*Middleware, error) {
 
 // SetupTopology configures the RabbitMQ topology (exchange, queue, and binding)
 func (m *Middleware) SetupTopology() error {
-	exchangeName := "dispatcher"
+	exchangeName := config.DISPATCHER_EXCHANGE
 	queueName := config.CONNECTION_QUEUE_NAME
 	routingKey := queueName
 
