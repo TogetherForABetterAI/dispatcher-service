@@ -46,8 +46,9 @@ func NewPublisher(conn *amqp.Connection) (*Publisher, error) {
 	}, nil
 }
 
-
-
+// When you want a single message to be delivered to a single queue,
+// you can publish to the default exchange with the routingKey of the queue name.
+// This is because every declared queue gets an implicit route to the default exchange.
 func (p *Publisher) Publish(routingKey string, message []byte, exchangeName string) error {
 	for attempt := 1; attempt <= 5; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -91,7 +92,6 @@ func (p *Publisher) Publish(routingKey string, message []byte, exchangeName stri
 	}
 	return fmt.Errorf("failed to publish message to exchange %s after 5 attempts", exchangeName)
 }
-
 
 // Close closes only the channel, not the connection
 func (p *Publisher) Close() {
