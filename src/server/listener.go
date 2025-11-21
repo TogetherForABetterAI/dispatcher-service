@@ -189,10 +189,9 @@ func (l *Listener) processMessage(msg amqp.Delivery) {
 	}
 
 	l.logger.WithFields(logrus.Fields{
-		"client_id":      notification.ClientId,
-		"inputs_format":  notification.InputsFormat,
-		"outputs_format": notification.OutputsFormat,
-		"model_type":     notification.ModelType,
+		"client_id":               notification.ClientId,
+		"session_id":              notification.SessionId,
+		"total_batches_generated": notification.TotalBatchesGenerated,
 	}).Info("Processing new client notification")
 
 	clientID := notification.ClientId
