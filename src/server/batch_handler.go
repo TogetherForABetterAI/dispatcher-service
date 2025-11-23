@@ -112,7 +112,8 @@ func (bh *BatchHandler) Start(notification *models.ConnectNotification) error {
 
 // processBatchChunk handles publishing and marking a chunk of batches
 func (bh *BatchHandler) processBatchChunk(batches []db.Batch, notification *models.ConnectNotification, isLastChunk bool) error {
-	batchIDs := make([]string, 0, len(batches))
+	sessionIDs := make([]string, 0, len(batches))
+	batchIndices := make([]int, 0, len(batches))
 
 	// Publish all batches in the chunk
 	for i, batch := range batches {
@@ -132,25 +133,25 @@ func (bh *BatchHandler) processBatchChunk(batches []db.Batch, notification *mode
 		// Publish the batch to both destinations
 		if err := bh.publishBatch(batch, notification.SessionId, isLastBatch); err != nil {
 			// If publish fails, don't mark any batch as enqueued
-			return fmt.Errorf("failed to publish batch %s (index %d in chunk): %w", batch.BatchID, i, err)
+			return fmt.Errorf("failed to publish batch index %d (position %d in chunk): %w", batch.BatchIndex, i, err)
 		}
 
-		batchIDs = append(batchIDs, batch.BatchID)
+		sessionIDs = append(sessionIDs, batch.SessionID)
+		batchIndices = append(batchIndices, batch.BatchIndex)
 
 		bh.logger.WithFields(logrus.Fields{
 			"client_id":     notification.ClientId,
 			"session_id":    notification.SessionId,
-			"batch_id":      batch.BatchID,
 			"batch_index":   batch.BatchIndex,
 			"is_last_batch": isLastBatch,
 		}).Debug("Batch published successfully")
 	}
 
 	// Mark all batches in this chunk as enqueued in a single DB operation
-	if err := bh.dbClient.MarkBatchesAsEnqueued(bh.ctx, batchIDs); err != nil {
+	if err := bh.dbClient.MarkBatchesAsEnqueued(bh.ctx, sessionIDs, batchIndices); err != nil {
 		bh.logger.WithError(err).WithFields(logrus.Fields{
-			"batch_count": len(batchIDs),
-			"batch_ids":   batchIDs,
+			"batch_count":   len(batchIndices),
+			"batch_indices": batchIndices,
 		}).Error("Failed to mark batches as enqueued, but messages were published. Idempotency will handle duplicates.")
 		// Don't return error - messages already published, idempotency will handle it
 	}

@@ -18,7 +18,6 @@ type Client struct {
 
 // Batch represents a batch record from the database
 type Batch struct {
-	BatchID     string  `db:"batch_id"`
 	SessionID   string  `db:"session_id"`
 	BatchIndex  int     `db:"batch_index"`
 	DataPayload []byte  `db:"data_payload"`
@@ -67,7 +66,7 @@ func NewClient(cfg config.Interface) (*Client, error) {
 // GetPendingBatches retrieves all pending batches for a given session
 func (c *Client) GetPendingBatches(ctx context.Context, sessionID string) ([]Batch, error) {
 	query := `
-		SELECT batch_id, session_id, batch_index, data_payload, labels, is_enqueued
+		SELECT session_id, batch_index, data_payload, labels, is_enqueued
 		FROM batches
 		WHERE session_id = $1 AND is_enqueued = false
 		ORDER BY batch_index ASC
@@ -85,7 +84,7 @@ func (c *Client) GetPendingBatches(ctx context.Context, sessionID string) ([]Bat
 // GetPendingBatchesLimit retrieves a limited number of pending batches for a given session
 func (c *Client) GetPendingBatchesLimit(ctx context.Context, sessionID string, limit int) ([]Batch, error) {
 	query := `
-		SELECT batch_id, session_id, batch_index, data_payload, labels, is_enqueued
+		SELECT session_id, batch_index, data_payload, labels, is_enqueued
 		FROM batches
 		WHERE session_id = $1 AND is_enqueued = false
 		ORDER BY batch_index ASC
@@ -113,7 +112,6 @@ func (c *Client) scanBatches(rows interface {
 		var labelsJSON []byte
 
 		err := rows.Scan(
-			&batch.BatchID,
 			&batch.SessionID,
 			&batch.BatchIndex,
 			&batch.DataPayload,
@@ -127,7 +125,7 @@ func (c *Client) scanBatches(rows interface {
 		// Parse JSON labels to []int32
 		if len(labelsJSON) > 0 {
 			if err := json.Unmarshal(labelsJSON, &batch.Labels); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal labels for batch %s: %w", batch.BatchID, err)
+				return nil, fmt.Errorf("failed to unmarshal labels for batch (session: %s, index: %d): %w", batch.SessionID, batch.BatchIndex, err)
 			}
 		}
 
@@ -139,48 +137,40 @@ func (c *Client) scanBatches(rows interface {
 	}
 
 	return batches, nil
-} // MarkBatchAsEnqueued updates a single batch status to enqueued
+}
+
+// MarkBatchAsEnqueued updates a single batch status to enqueued
 func (c *Client) MarkBatchAsEnqueued(ctx context.Context, batchID string) error {
-	query := `
-		UPDATE batches
-		SET is_enqueued = true
-		WHERE batch_id = $1
-	`
-
-	result, err := c.pool.Exec(ctx, query, batchID)
-	if err != nil {
-		return fmt.Errorf("failed to update batch status: %w", err)
-	}
-
-	rowsAffected := result.RowsAffected()
-	if rowsAffected == 0 {
-		return fmt.Errorf("batch not found: %s", batchID)
-	}
-
-	c.logger.WithField("batch_id", batchID).Debug("Marked batch as enqueued")
-	return nil
+	// This method is kept for interface compatibility but is deprecated
+	// In the new schema, we don't have batch_id anymore
+	// This should not be called in the current implementation
+	return fmt.Errorf("MarkBatchAsEnqueued is deprecated: use composite key (session_id, batch_index)")
 }
 
 // MarkBatchesAsEnqueued updates multiple batches status to enqueued in a single query
-func (c *Client) MarkBatchesAsEnqueued(ctx context.Context, batchIDs []string) error {
-	if len(batchIDs) == 0 {
+func (c *Client) MarkBatchesAsEnqueued(ctx context.Context, sessionIDs []string, batchIndices []int) error {
+	if len(sessionIDs) == 0 || len(batchIndices) == 0 {
 		return nil // Nothing to update
+	}
+
+	if len(sessionIDs) != len(batchIndices) {
+		return fmt.Errorf("sessionIDs and batchIndices must have the same length")
 	}
 
 	query := `
 		UPDATE batches
 		SET is_enqueued = true
-		WHERE batch_id = ANY($1)
+		WHERE (session_id = ANY($1) AND batch_index = ANY($2))
 	`
 
-	result, err := c.pool.Exec(ctx, query, batchIDs)
+	result, err := c.pool.Exec(ctx, query, sessionIDs, batchIndices)
 	if err != nil {
 		return fmt.Errorf("failed to update batches status: %w", err)
 	}
 
 	rowsAffected := result.RowsAffected()
 	c.logger.WithFields(logrus.Fields{
-		"batch_count":   len(batchIDs),
+		"batch_count":   len(batchIndices),
 		"rows_affected": rowsAffected,
 	}).Debug("Marked batches as enqueued")
 

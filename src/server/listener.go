@@ -21,7 +21,7 @@ type DBClient interface {
 	GetPendingBatches(ctx context.Context, sessionID string) ([]db.Batch, error)
 	GetPendingBatchesLimit(ctx context.Context, sessionID string, limit int) ([]db.Batch, error)
 	MarkBatchAsEnqueued(ctx context.Context, batchID string) error
-	MarkBatchesAsEnqueued(ctx context.Context, batchIDs []string) error
+	MarkBatchesAsEnqueued(ctx context.Context, sessionIDs []string, batchIndices []int) error
 	Close()
 }
 

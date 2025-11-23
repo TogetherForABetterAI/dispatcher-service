@@ -37,8 +37,8 @@ func (m *MockDBClient) MarkBatchAsEnqueued(ctx context.Context, batchID string) 
 }
 
 // MarkBatchesAsEnqueued mocks the MarkBatchesAsEnqueued method
-func (m *MockDBClient) MarkBatchesAsEnqueued(ctx context.Context, batchIDs []string) error {
-	args := m.Called(ctx, batchIDs)
+func (m *MockDBClient) MarkBatchesAsEnqueued(ctx context.Context, sessionIDs []string, batchIndices []int) error {
+	args := m.Called(ctx, sessionIDs, batchIndices)
 	return args.Error(0)
 }
 
