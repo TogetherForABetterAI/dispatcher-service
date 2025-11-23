@@ -83,7 +83,7 @@ func (m *Middleware) SetupTopology() error {
 	routingKey := queueName
 
 	// Declare the exchange
-	if err := m.DeclareExchange(exchangeName, "direct"); err != nil {
+	if err := m.DeclareExchange(exchangeName, "fanout"); err != nil {
 		return fmt.Errorf("failed to declare exchange '%s': %w", exchangeName, err)
 	}
 	m.logger.WithField("exchange", exchangeName).Info("Exchange declared successfully")
