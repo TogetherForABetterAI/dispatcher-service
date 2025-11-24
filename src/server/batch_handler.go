@@ -41,7 +41,7 @@ func NewBatchHandler(publisher PublisherInterface, dbClient DBClient, logger *lo
 		cancel:                       cancel,
 		dispatcherToClientQueue:      dispatcherToClientQueue,
 		dispatcherToCalibrationQueue: dispatcherToCalibrationQueue,
-		totalBatches:                 0, 
+		totalBatches:                 0,
 	}
 }
 
@@ -58,7 +58,6 @@ func (bh *BatchHandler) Start(notification *models.ConnectNotification) error {
 	}).Info("Starting batch handler for client session")
 
 	totalProcessed := 0
-	batchesToFetch := config.BATCHES_TO_FETCH
 
 	// Loop until no more pending batches
 	for {
@@ -72,24 +71,21 @@ func (bh *BatchHandler) Start(notification *models.ConnectNotification) error {
 		// Calculate how many batches remain
 		batchesRemaining := bh.totalBatches - totalProcessed
 
-		// Determine how many batches to fetch this round
-		if batchesRemaining < config.BATCHES_TO_FETCH {
-			batchesToFetch = batchesRemaining
-		}
-
-		// If no more batches to process, we're done
-		if batchesToFetch == 0 {
+		if batchesRemaining <= 0 {
 			bh.logger.WithFields(logrus.Fields{
-				"client_id":       notification.ClientId,
-				"session_id":      notification.SessionId,
-				"total_processed": totalProcessed,
-				"total_batches":   bh.totalBatches,
+				"client_id":     notification.ClientId,
+				"session_id":    notification.SessionId,
+				"total_batches": bh.totalBatches,
 			}).Info("All batches processed for client session")
-			break
+			break // All batches processed
 		}
 
 		// Get the next chunk of batches
-		batches, err := bh.dbClient.GetPendingBatchesLimit(bh.ctx, notification.SessionId, batchesToFetch)
+		batches, err := bh.dbClient.GetPendingBatchesLimit(
+			bh.ctx,
+			notification.SessionId,
+			min(config.BATCHES_TO_FETCH, batchesRemaining),
+		)
 		if err != nil {
 			return fmt.Errorf("failed to get pending batches: %w", err)
 		}
