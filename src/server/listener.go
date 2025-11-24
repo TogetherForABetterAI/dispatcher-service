@@ -2,16 +2,12 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
-
-	// "time" // Ya no es necesario
 
 	"github.com/data-dispatcher-service/src/config"
 	"github.com/data-dispatcher-service/src/db"
 	"github.com/data-dispatcher-service/src/middleware"
-	"github.com/data-dispatcher-service/src/models"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sirupsen/logrus"
 )
@@ -26,7 +22,7 @@ type DBClient interface {
 }
 
 // this type definition can be used if you want to inject different client manager implementations
-type ClientManagerFactory func(config.Interface, middleware.MiddlewareInterface, DBClient, string) ClientManagerInterface
+type ClientManagerFactory func(config.Interface, middleware.MiddlewareInterface, DBClient, *middleware.Publisher) ClientManagerInterface
 
 // Listener handles listening for new client notifications and processing them
 type Listener struct {
@@ -39,8 +35,8 @@ type Listener struct {
 	config      config.Interface
 	dbClient    DBClient // Shared database client
 
-	clientsMutex  sync.RWMutex
-	activeClients map[string]ClientManagerInterface
+	// Track active workers
+	workers []*Worker
 
 	// Context and cancellation for graceful shutdown
 	ctx    context.Context
@@ -76,7 +72,7 @@ func NewListener(
 		dbClient:             dbClient,
 		ctx:                  ctx,
 		cancel:               cancel,
-		activeClients:        make(map[string]ClientManagerInterface),
+		workers:              make([]*Worker, 0, cfg.GetWorkerPoolSize()),
 		clientManagerFactory: factory,
 		consumerTag:          cfg.GetPodName(), // Use POD_NAME as consumer tag
 	}
@@ -108,9 +104,16 @@ func (l *Listener) Start() error {
 		"queue":        l.queueName,
 	}).Info("Consumer registered with unique tag")
 
+	// Start worker pool
 	for i := 0; i < poolSize; i++ {
+		worker := NewWorker(i, l.config, l.middleware, l.dbClient, l.clientManagerFactory, l.logger)
+		l.workers = append(l.workers, worker)
+
 		l.wg.Add(1)
-		go l.worker(i)
+		go func(w *Worker) {
+			defer l.wg.Done()
+			w.Start(l.jobs)
+		}(worker)
 	}
 
 	l.logger.Info("Worker pool started.")
@@ -134,113 +137,19 @@ func (l *Listener) Start() error {
 	}
 }
 
-// worker is a long-lived goroutine that processes jobs
-func (l *Listener) worker(id int) {
-	defer l.wg.Done()
-	l.logger.WithField("worker_id", id).Info("Worker started")
-	for msg := range l.jobs {
-		l.logger.WithField("worker_id", id).Debug("Worker picked up a job")
-		l.safeProcessMessage(msg)
-
-		l.logger.WithField("worker_id", id).Debug("Worker finished a job")
-	}
-
-	l.logger.WithField("worker_id", id).Info("Worker shutting down.")
-}
-
-// safeProcessMessage wraps processMessage with panic recovery
-func (l *Listener) safeProcessMessage(msg amqp.Delivery) {
-	defer func() {
-		if r := recover(); r != nil {
-			l.logger.WithFields(logrus.Fields{
-				"panic_error": r,
-				"body":        string(msg.Body),
-			}).Error("Recovered from panic while processing message")
-
-			// Nack the message without requeuing to avoid infinite loops
-			msg.Nack(false, false)
-		}
-	}()
-
-	// if a panic occurs, it will be caught by the defer above
-	l.processMessage(msg)
-}
-
-// processMessage processes a single client notification message
-func (l *Listener) processMessage(msg amqp.Delivery) {
-	// Parse the notification
-	var notification models.ConnectNotification
-	if err := json.Unmarshal(msg.Body, &notification); err != nil {
-		l.logger.WithFields(logrus.Fields{
-			"error": err.Error(),
-			"body":  string(msg.Body),
-		}).Error("Failed to unmarshal client notification")
-		msg.Nack(false, false) // Don't requeue invalid messages
-		return
-	}
-
-	// Validate notification
-	if notification.ClientId == "" {
-		l.logger.WithFields(logrus.Fields{
-			"notification": notification,
-		}).Error("Client notification missing client_id")
-		msg.Nack(false, false) // Don't requeue invalid messages
-		return
-	}
-
-	l.logger.WithFields(logrus.Fields{
-		"client_id":               notification.ClientId,
-		"session_id":              notification.SessionId,
-		"total_batches_generated": notification.TotalBatchesGenerated,
-	}).Info("Processing new client notification")
-
-	clientID := notification.ClientId
-
-	clientManager := l.clientManagerFactory(l.config, l.middleware, l.dbClient, clientID)
-	l.clientsMutex.Lock()
-	l.activeClients[clientID] = clientManager
-	l.clientsMutex.Unlock()
-
-	// Ensure client session is removed
-	// regardless of processing outcome
-	defer func() {
-		l.clientsMutex.Lock()
-		delete(l.activeClients, clientID)
-		l.clientsMutex.Unlock()
-		l.logger.WithField("client_id", clientID).Info("Client processing finished and session removed.")
-	}()
-
-	if err := clientManager.HandleClient(&notification); err != nil {
-		if err == context.Canceled || err == context.DeadlineExceeded {
-			return
-		}
-		l.logger.WithFields(logrus.Fields{
-			"client_id": notification.ClientId,
-			"error":     err.Error(),
-		}).Error("Failed to process client")
-		msg.Nack(false, true) // Requeue on processing error
-	} else {
-		l.logger.WithFields(logrus.Fields{
-			"client_id": notification.ClientId,
-		}).Info("Successfully completed client processing")
-		msg.Ack(false) // Acknowledge successful processing
-	}
-}
-
 func (l *Listener) InterruptClients() {
 	l.cancel() // stop processing new messages
 
-	l.clientsMutex.RLock()
 	l.logger.Info("Listener stopping - signaling workers to stop.")
-	for _, clientManager := range l.activeClients {
-		clientManager.Stop() // interrupt ongoing processing
+	for _, worker := range l.workers {
+		worker.Stop() // Signal each worker to stop its current client
 	}
-	l.clientsMutex.RUnlock()
 
 	l.wg.Wait() // wait for workers to finish processing
-	l.logger.Info("All clients have finished processing.")
+	l.logger.Info("All workers have finished processing.")
 }
 
 func (l *Listener) GetConsumerTag() string {
 	return l.consumerTag
 }
+

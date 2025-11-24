@@ -45,8 +45,8 @@ func NewServer(cfg config.Interface) (*Server, error) {
 		dbClient:   dbClient,
 	}
 
-	realFactory := func(cfg config.Interface, mw middleware.MiddlewareInterface, dbClient DBClient, clientID string) ClientManagerInterface {
-		return NewClientManager(cfg, mw, dbClient, clientID)
+	realFactory := func(cfg config.Interface, mw middleware.MiddlewareInterface, dbClient DBClient, publisher *middleware.Publisher) ClientManagerInterface {
+		return NewClientManager(cfg, mw, dbClient, publisher)
 	}
 
 	listener := NewListener(mw, cfg, dbClient, realFactory)
