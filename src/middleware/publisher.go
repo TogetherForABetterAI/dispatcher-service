@@ -86,7 +86,7 @@ func (p *Publisher) Publish(routingKey string, message []byte, exchangeName stri
 		p.logger.WithFields(logrus.Fields{
 			"routing_key": routingKey,
 			"exchange":    exchangeName,
-		}).Debug("Published message to exchange")
+		}).Info("Published message to exchange")
 
 		return nil
 	}
