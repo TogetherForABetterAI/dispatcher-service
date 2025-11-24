@@ -50,6 +50,7 @@ func (c *ClientManager) HandleClient(notification *models.ConnectNotification) e
 
 	dispatcherToCalibrationQueue := fmt.Sprintf("%s_labeled_queue", notification.ClientId)
 	dispatcherToClientQueue := fmt.Sprintf("%s_dispatcher_queue", notification.ClientId)
+	c.logger.Info("DISPATCHER_QUEUE: ", dispatcherToClientQueue)
 
 	if err := c.middleware.DeclareQueue(dispatcherToCalibrationQueue); err != nil {
 		return fmt.Errorf("failed to declare queue %s: %w", dispatcherToClientQueue, err)
