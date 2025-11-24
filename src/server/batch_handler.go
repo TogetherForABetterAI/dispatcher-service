@@ -164,7 +164,7 @@ func (bh *BatchHandler) processBatchChunk(batches []db.Batch, notification *mode
 			"batch_index":   batch.BatchIndex,
 			"total_batches": bh.totalBatches,
 			"is_last_batch": isLastBatch,
-		}).Debug("Batch published successfully")
+		}).Info("Batch published successfully")
 	}
 
 	// Mark all batches in this chunk as enqueued in a single DB operation
