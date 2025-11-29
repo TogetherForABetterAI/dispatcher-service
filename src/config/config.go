@@ -87,7 +87,7 @@ func NewConfig() (GlobalConfig, error) {
 		return GlobalConfig{}, fmt.Errorf("LOG_LEVEL environment variable is required")
 	}
 
-	// Get Pod name from Kubernetes Downward API (for consumer tag)
+	// Get Pod name from GKE (for consumer tag)
 	podName := os.Getenv("POD_NAME")
 	if podName == "" {
 		// Fallback for local development
