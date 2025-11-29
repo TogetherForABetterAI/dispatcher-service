@@ -2,11 +2,25 @@ package middleware
 
 import (
 	"fmt"
-	"github.com/mlops-eval/data-dispatcher-service/src/config"
+	"sync"
+
+	"github.com/data-dispatcher-service/src/config"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sirupsen/logrus"
-	"log"
 )
+
+// MiddlewareInterface defines the contract for middleware operations
+type MiddlewareInterface interface {
+	SetupTopology() error
+	DeclareQueue(queueName string) error
+	DeclareExchange(exchangeName string, exchangeType string) error
+	BindQueue(queueName, exchangeName, routingKey string) error
+	StopConsuming(consumerTag string) error
+	SetQoS(prefetchCount int) error
+	BasicConsume(queueName string, consumerTag string) (<-chan amqp.Delivery, error)
+	Close()
+	Conn() *amqp.Connection
+}
 
 type Middleware struct {
 	conn             *amqp.Connection
@@ -14,6 +28,7 @@ type Middleware struct {
 	confirms_chan    chan amqp.Confirmation
 	logger           *logrus.Logger
 	MiddlewareConfig *config.MiddlewareConfig
+	mu               sync.Mutex
 }
 
 const MAX_RETRIES = 5
@@ -46,14 +61,6 @@ func NewMiddleware(cfg *config.MiddlewareConfig) (*Middleware, error) {
 		return nil, err
 	}
 
-	// Declare required exchanges here
-	mw := &Middleware{channel: ch}
-	if err := mw.DeclareExchange(config.DATASET_EXCHANGE, "direct"); err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare exchange %s: %w", config.DATASET_EXCHANGE, err)
-	}
-
 	logger.WithFields(logrus.Fields{
 		"host": cfg.GetHost(),
 		"port": cfg.GetPort(),
@@ -69,10 +76,44 @@ func NewMiddleware(cfg *config.MiddlewareConfig) (*Middleware, error) {
 	}, nil
 }
 
+// SetupTopology configures the RabbitMQ topology (exchange, queue, and binding)
+func (m *Middleware) SetupTopology() error {
+	exchangeName := config.DISPATCHER_EXCHANGE
+	queueName := config.CONNECTION_QUEUE_NAME
+	routingKey := queueName
+
+	// Declare the exchange
+	if err := m.DeclareExchange(exchangeName, "fanout"); err != nil {
+		return fmt.Errorf("failed to declare exchange '%s': %w", exchangeName, err)
+	}
+	m.logger.WithField("exchange", exchangeName).Info("Exchange declared successfully")
+
+	// Declare the queue as durable
+	if err := m.DeclareQueue(queueName); err != nil {
+		return fmt.Errorf("failed to declare queue '%s': %w", queueName, err)
+	}
+	m.logger.WithField("queue", queueName).Info("Queue declared successfully")
+
+	// Bind the queue to the exchange
+	if err := m.BindQueue(queueName, exchangeName, routingKey); err != nil {
+		return fmt.Errorf("failed to bind queue '%s' to exchange '%s': %w", queueName, exchangeName, err)
+	}
+	m.logger.WithFields(logrus.Fields{
+		"queue":       queueName,
+		"exchange":    exchangeName,
+		"routing_key": routingKey,
+	}).Info("Queue bound to exchange successfully")
+
+	return nil
+}
+
 func (m *Middleware) DeclareQueue(queueName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	_, err := m.channel.QueueDeclare(
 		queueName, // name
-		false,     // durable
+		true,      // durable - la cola sobrevive al reinicio de RabbitMQ
 		false,     // delete when unused
 		false,     // exclusive
 		false,     // no-wait
@@ -82,10 +123,13 @@ func (m *Middleware) DeclareQueue(queueName string) error {
 }
 
 func (m *Middleware) DeclareExchange(exchangeName string, exchangeType string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.channel.ExchangeDeclare(
 		exchangeName,
 		exchangeType,
-		false, // durable
+		true,  // durable - el exchange sobrevive al reinicio de RabbitMQ
 		false, // autoDelete
 		false, // internal
 		false, // noWait
@@ -94,6 +138,9 @@ func (m *Middleware) DeclareExchange(exchangeName string, exchangeType string) e
 }
 
 func (m *Middleware) BindQueue(queueName, exchangeName, routingKey string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.channel.QueueBind(
 		queueName,
 		routingKey,
@@ -103,7 +150,30 @@ func (m *Middleware) BindQueue(queueName, exchangeName, routingKey string) error
 	)
 }
 
-func (m *Middleware) BasicConsume(queueName string, callback func(amqp.Delivery)) error {
+// StopConsuming cancels all consumers to stop receiving new messages
+func (m *Middleware) StopConsuming(consumerTag string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.channel != nil {
+		if err := m.channel.Cancel(consumerTag, false); err != nil {
+			m.logger.WithError(err).Warnf("Failed to cancel consumer '%s'", consumerTag)
+			return err
+		}
+	}
+	return nil
+}
+
+// SetQoS configures the prefetch count for the channel
+func (mw *Middleware) SetQoS(prefetchCount int) error {
+	return mw.channel.Qos(
+		prefetchCount, // prefetch count - number of messages without ack
+		0,             // prefetch size - 0 means no limit on message size
+		false,
+	)
+}
+
+func (m *Middleware) BasicConsume(queueName string, consumerTag string) (<-chan amqp.Delivery, error) {
 	msgs, err := m.channel.Consume(
 		queueName,
 		"",    // consumer
@@ -114,33 +184,27 @@ func (m *Middleware) BasicConsume(queueName string, callback func(amqp.Delivery)
 		nil,   // args
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	go func() {
-		for msg := range msgs {
-			go func(m amqp.Delivery) {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Printf("panic in middleware callback: %v", r)
-						_ = m.Nack(false, true)
-					}
-				}()
-				callback(m)
-			}(msg)
-		}
-	}()
-
-	return nil
+	return msgs, nil
 }
 
 func (m *Middleware) Close() {
-	if err := m.channel.Close(); err != nil {
-		log.Printf("action: rabbitmq_channel_close | result: fail | error: %v", err)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.channel != nil {
+		if err := m.channel.Close(); err != nil && !m.conn.IsClosed() {
+			m.logger.WithError(err).Warn("Failed to close RabbitMQ channel")
+		}
 	}
-	if err := m.conn.Close(); err != nil {
-		log.Printf("action: rabbitmq_connection_close | result: fail | error: %v", err)
+	if m.conn != nil && !m.conn.IsClosed() {
+		if err := m.conn.Close(); err != nil {
+			m.logger.WithError(err).Warn("Failed to close RabbitMQ connection")
+		}
 	}
+	m.logger.Info("RabbitMQ connection closed")
 }
 
 // Conn returns the underlying connection for reuse

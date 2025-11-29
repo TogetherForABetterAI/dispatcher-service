@@ -2,82 +2,108 @@ package server
 
 import (
 	"fmt"
-	"sync"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/mlops-eval/data-dispatcher-service/src/config"
-	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
+	"github.com/data-dispatcher-service/src/config"
+	"github.com/data-dispatcher-service/src/db"
+	"github.com/data-dispatcher-service/src/middleware"
 	"github.com/sirupsen/logrus"
 )
 
-// Server handles RabbitMQ server operations for client notifications
+// Server handles RabbitMQ server operations
 type Server struct {
-	middleware *middleware.Middleware
-	logger     *logrus.Logger
-	listener   *Listener
-	clientWg   sync.WaitGroup // Track active client goroutines
-	shutdown   chan struct{}  // Signal for graceful shutdown
-	config     config.GlobalConfig
+	middleware      *middleware.Middleware
+	logger          *logrus.Logger
+	listener        *Listener
+	config          config.Interface
+	dbClient        *db.Client               // Shared database client
+	shutdownHandler ShutdownHandlerInterface // Handles graceful shutdown logic
 }
 
-// NewServer creates a new RabbitMQ server for client notifications
-func NewServer(cfg config.GlobalConfig) (*Server, error) {
+// NewServer creates a new RabbitMQ server
+func NewServer(cfg config.Interface) (*Server, error) {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
 
-	// Use middleware to establish RabbitMQ connection
-	middleware, err := middleware.NewMiddleware(cfg.GetMiddlewareConfig())
+	mw, err := middleware.NewMiddleware(cfg.GetMiddlewareConfig())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create middleware: %w", err)
 	}
 
-	// Create client manager with shared connection
-	clientManager := NewClientManager(cfg, middleware.Conn(), middleware)
-
-	// Create listener (queueName is now set in constructor)
-	listener := NewListener(clientManager, middleware, logger)
-
-	server := &Server{
-		middleware: middleware,
-		logger:     logger,
-		listener:   listener,
-		shutdown:   make(chan struct{}),
-		config:     cfg,
+	// Create shared database client
+	dbClient, err := db.NewClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create database client: %w", err)
 	}
 
+	server := &Server{
+		middleware: mw,
+		logger:     logger,
+		config:     cfg,
+		dbClient:   dbClient,
+	}
+
+	realFactory := func(cfg config.Interface, mw middleware.MiddlewareInterface, dbClient DBClient, publisher *middleware.Publisher) ClientManagerInterface {
+		return NewClientManager(cfg, mw, dbClient, publisher)
+	}
+
+	listener := NewListener(mw, cfg, dbClient, realFactory)
+
+	server.listener = listener
+
+	// Initialize shutdown handler
+	server.shutdownHandler = NewShutdownHandler(
+		logger,
+		listener,
+		mw,
+		dbClient,
+	)
+
 	logger.WithFields(logrus.Fields{
-		"host": cfg.GetMiddlewareConfig().GetHost(),
-		"port": cfg.GetMiddlewareConfig().GetPort(),
-		"user": cfg.GetMiddlewareConfig().GetUsername(),
-	}).Info("Server initialized - ready to consume from data-dispatcher-connections queue")
+		"host":        cfg.GetMiddlewareConfig().GetHost(),
+		"port":        cfg.GetMiddlewareConfig().GetPort(),
+		"user":        cfg.GetMiddlewareConfig().GetUsername(),
+		"pod_name":    cfg.GetPodName(),
+		"worker_pool": cfg.GetWorkerPoolSize(),
+	}).Info("Server initialized successfully")
 
 	return server, nil
 }
 
-// Start starts consuming client notification messages from the existing queue
-func (s *Server) Start() error {
-	// Start the listener to consume messages and spawn goroutines
-	// for each connection packet received
-	err := s.listener.Start(s.shutdown, &s.clientWg)
-	if err != nil {
-		return fmt.Errorf("failed to start consuming: %w", err)
-	}
+func (s *Server) Run() error {
+	osSignals := make(chan os.Signal, 1)
+	signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
 
-	return nil
+	serverDone := s.startServerGoroutine()
+
+	return s.shutdownHandler.HandleShutdown(serverDone, osSignals)
 }
 
-// Stop gracefully stops the server and waits for all client goroutines to finish
-func (s *Server) Stop() {
-	s.logger.Info("Initiating graceful server shutdown")
-	
-	// Close middleware (RabbitMQ connection and channel)
-	s.middleware.Close()
-	
-	// Signal all client goroutines to stop
-	close(s.shutdown)
+func (s *Server) startServerGoroutine() chan error {
+	serverDone := make(chan error, 1)
+	go func() {
+		s.logger.WithFields(logrus.Fields{
+			"pod_name":    s.config.GetPodName(),
+			"worker_pool": s.config.GetWorkerPoolSize(),
+		}).Info("Starting data dispatcher service")
 
-	// Wait for all client goroutines to finish
-	s.clientWg.Wait()
+		err := s.startComponents()
+		serverDone <- err
+	}()
+	return serverDone
+}
 
-
-	s.logger.Info("Server shutdown completed")
+// main function
+func (s *Server) startComponents() error {
+	err := s.listener.Start() // this is the main blocking call
+	if err != nil {
+		if err.Error() == "context canceled" {
+			s.logger.Info("Listener stopped consuming gracefully.")
+			return nil
+		}
+		return fmt.Errorf("failed to start consuming: %w", err)
+	}
+	return nil
 }

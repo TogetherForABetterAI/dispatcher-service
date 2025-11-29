@@ -1,90 +1,70 @@
 package server
 
 import (
-	"context"
 	"fmt"
 
-	"github.com/mlops-eval/data-dispatcher-service/src/config"
-	"github.com/mlops-eval/data-dispatcher-service/src/grpc"
-	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
-	"github.com/mlops-eval/data-dispatcher-service/src/models"
-	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/data-dispatcher-service/src/config"
+	"github.com/data-dispatcher-service/src/middleware"
+	"github.com/data-dispatcher-service/src/models"
 	"github.com/sirupsen/logrus"
 )
 
 // ClientManager handles processing client data requests
 type ClientManager struct {
-	datasetServiceAddr string
-	logger             *logrus.Logger
-	maxRetries         int
-	batchSize          int32
-	conn               *amqp.Connection
-	middleware         *middleware.Middleware
+	userID       string // Will be set when HandleClient is called
+	logger       *logrus.Logger
+	middleware   middleware.MiddlewareInterface
+	dbClient     DBClient
+	publisher    *middleware.Publisher // Reused publisher from worker
+	batchHandler *BatchHandler
+}
+
+type ClientManagerInterface interface {
+	HandleClient(notification *models.ConnectNotification) error
+	Stop()
 }
 
 // NewClientManager creates a new client manager
-func NewClientManager(cfg config.GlobalConfig, conn *amqp.Connection, middleware *middleware.Middleware) *ClientManager {
+func NewClientManager(cfg config.Interface, mw middleware.MiddlewareInterface, dbClient DBClient, publisher *middleware.Publisher) *ClientManager {
 	logger := logrus.New()
 	logger.SetFormatter(&logrus.JSONFormatter{})
 
 	return &ClientManager{
-		datasetServiceAddr: cfg.GetGrpcConfig().GetDatasetServiceAddr(),
-		logger:             logger,
-		maxRetries:         cfg.GetMiddlewareConfig().GetMaxRetries(),
-		batchSize:          cfg.GetGrpcConfig().GetBatchSize(),
-		conn:               conn,
-		middleware:         middleware,
+		logger:     logger,
+		middleware: mw,
+		dbClient:   dbClient,
+		publisher:  publisher,
+		userID:     "", // Will be set in HandleClient
 	}
 }
 
-// HandleClient processes a client notification by fetching and publishing dataset batches
-func (c *ClientManager) HandleClient(ctx context.Context, notification *models.ConnectNotification) error {
+// HandleClient processes a client notification by fetching batches from DB and publishing to client queue
+func (c *ClientManager) HandleClient(notification *models.ConnectNotification) error {
+	// Set UserID from notification
+	c.userID = notification.UserID
 
-	// Create RabbitMQ publisher using shared connection
-	publisher, err := middleware.NewPublisher(c.conn)
-	if err != nil {
-		return fmt.Errorf("failed to create RabbitMQ publisher: %w", err)
-	}
-	defer publisher.Close()
+	c.logger.WithFields(logrus.Fields{
+		"user_id":    notification.UserID,
+		"session_id": notification.SessionId,
+	}).Info("Starting to handle client notification")
 
-	// Create and bind queues for this client
-	if err := c.createAndBindClientQueues(notification.ClientId); err != nil {
-		return err
-	}
+	dispatcherToCalibrationQueue := fmt.Sprintf(config.DISPATCHER_TO_CALIBRATION_QUEUE, notification.UserID)
+	dispatcherToClientQueue := fmt.Sprintf(config.DISPATCHER_TO_CLIENT_QUEUE, notification.UserID)
 
-	// Create gRPC client for dataset service
-	grpcClient, err := grpc.NewClient(c.datasetServiceAddr)
-	if err != nil {
-		return fmt.Errorf("failed to create dataset service client: %w", err)
+	if err := c.middleware.DeclareQueue(dispatcherToCalibrationQueue); err != nil {
+		return fmt.Errorf("failed to declare queue %s: %w", dispatcherToClientQueue, err)
 	}
 
-	// Create and start batch handler
-	batchHandler := NewBatchHandler(publisher, grpcClient, notification.ModelType, c.batchSize, c.logger)
-	return batchHandler.Start(ctx, notification)
+	// Create batch handler with the reused publisher from worker
+	c.batchHandler = NewBatchHandler(c.publisher, c.dbClient, c.logger, dispatcherToClientQueue, dispatcherToCalibrationQueue)
+
+	// Start processing batches
+	return c.batchHandler.Start(notification)
 }
 
-// createAndBindClientQueues creates and binds labeled and unlabeled queues for a client
-func (c *ClientManager) createAndBindClientQueues(clientID string) error {
-	labeledQueueName := fmt.Sprintf("%s_labeled_queue", clientID)
-	unlabeledQueueName := fmt.Sprintf("%s_unlabeled_queue", clientID)
-	routingKeyLabeled := fmt.Sprintf("%s.labeled", clientID)
-	routingKeyUnlabeled := fmt.Sprintf("%s.unlabeled", clientID)
-
-	// Declare and bind labeled queue
-	if err := c.middleware.DeclareQueue(labeledQueueName); err != nil {
-		return fmt.Errorf("failed to declare queue %s: %w", labeledQueueName, err)
+func (c *ClientManager) Stop() {
+	c.logger.Info("Stopping ClientManager for client ", c.userID)
+	if c.batchHandler != nil {
+		c.batchHandler.Stop()
 	}
-	if err := c.middleware.BindQueue(labeledQueueName, config.DATASET_EXCHANGE, routingKeyLabeled); err != nil {
-		return fmt.Errorf("failed to bind queue %s to exchange %s with routing key %s: %w", labeledQueueName, config.DATASET_EXCHANGE, routingKeyLabeled, err)
-	}
-
-	// Declare and bind unlabeled queue
-	if err := c.middleware.DeclareQueue(unlabeledQueueName); err != nil {
-		return fmt.Errorf("failed to declare queue %s: %w", unlabeledQueueName, err)
-	}
-	if err := c.middleware.BindQueue(unlabeledQueueName, config.DATASET_EXCHANGE, routingKeyUnlabeled); err != nil {
-		return fmt.Errorf("failed to bind queue %s to exchange %s with routing key %s: %w", unlabeledQueueName, config.DATASET_EXCHANGE, routingKeyUnlabeled, err)
-	}
-
-	return nil
 }

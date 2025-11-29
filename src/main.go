@@ -1,28 +1,12 @@
 package main
 
 import (
+	"github.com/data-dispatcher-service/src/config"
+	"github.com/data-dispatcher-service/src/server"
 	"log"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
-
-	"github.com/mlops-eval/data-dispatcher-service/src/config"
-	"github.com/mlops-eval/data-dispatcher-service/src/server"
 )
-
-func main() {
-	config := loadConfig()
-	setupLogging(config)
-
-	srv, err := server.NewServer(config)
-	if err != nil {
-		slog.Error("Failed to initialize server", "error", err)
-		return
-	}
-
-	startServiceWithGracefulShutdown(srv, config)
-}
 
 func loadConfig() config.GlobalConfig {
 	config, err := config.NewConfig()
@@ -33,7 +17,6 @@ func loadConfig() config.GlobalConfig {
 }
 
 func setupLogging(config config.GlobalConfig) {
-	// Set log level from configuration
 	logLevel := slog.LevelInfo
 	switch config.GetLogLevel() {
 	case "debug":
@@ -50,28 +33,20 @@ func setupLogging(config config.GlobalConfig) {
 	slog.SetDefault(logger)
 }
 
-func startServiceWithGracefulShutdown(srv *server.Server, config config.GlobalConfig) {
-	// Channel to listen for interrupt signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+func main() {
+	config := loadConfig()
+	setupLogging(config)
 
-	// Start server in a goroutine
-	go func() {
-		slog.Info("Starting service",
-			"service", config.GetServiceName())
+	srv, err := server.NewServer(config)
+	if err != nil {
+		slog.Error("Failed to initialize server", "error", err)
+		os.Exit(1)
+	}
 
-		if err := srv.Start(); err != nil {
-			log.Fatalf("Failed to start RabbitMQ server: %v", err)
-		}
+	if err := srv.Run(); err != nil {
+		slog.Error("Service exited with error", "error", err)
+		os.Exit(1)
+	}
 
-		slog.Info("RabbitMQ server started successfully")
-	}()
-
-	// Wait for interrupt signal
-	<-quit
-	slog.Info("Shutting down service...")
-
-	// Attempt graceful shutdown
-	srv.Stop()
-	slog.Info("Service exited gracefully")
+	slog.Info("Service shutdown complete. Exiting.")
 }

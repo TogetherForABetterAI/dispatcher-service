@@ -9,21 +9,37 @@ import (
 )
 
 const (
-	DATASET_EXCHANGE      = "dataset_exchange"
-	CONNECTION_QUEUE_NAME = "data_dispatcher_connections_queue"
+	CONNECTION_QUEUE_NAME           = "dispatcher_connection_queue"
+	DATASET_EXCHANGE                = "dataset_exchange"
+	BATCHES_TO_FETCH                = 10
+	DISPATCHER_EXCHANGE             = "dispatcher_exchange"
+	DISPATCHER_TO_CLIENT_QUEUE      = "%s_dispatcher_queue"
+	DISPATCHER_TO_CALIBRATION_QUEUE = "%s_inputs_cal_queue"
 )
+
+type Interface interface {
+	GetLogLevel() string
+	GetPodName() string
+	GetMiddlewareConfig() *MiddlewareConfig
+	GetDatabaseConfig() *DatabaseConfig
+	GetWorkerPoolSize() int
+}
 
 type GlobalConfig struct {
 	logLevel         string
-	serviceName      string
-	containerName    string
+	podName          string
 	middlewareConfig *MiddlewareConfig
-	grpcConfig       *GrpcConfig
+	databaseConfig   *DatabaseConfig
+	workerPoolSize   int
 }
 
-type GrpcConfig struct {
-	datasetServiceAddr string
-	batchSize          int32
+// DatabaseConfig holds PostgreSQL connection configuration
+type DatabaseConfig struct {
+	host     string
+	port     int32
+	user     string
+	password string
+	dbname   string
 }
 
 // MiddlewareConfig holds RabbitMQ connection configuration
@@ -36,10 +52,9 @@ type MiddlewareConfig struct {
 }
 
 func NewConfig() (GlobalConfig, error) {
-	// Load environment variables
-	if err := godotenv.Load(); err != nil {
-		return GlobalConfig{}, fmt.Errorf("failed to load .env file: %w", err)
-	}
+	// Load environment variables from .env file (optional, for local development)
+	// In production (Kubernetes), variables are injected directly via ConfigMap/Secret
+	_ = godotenv.Load() // Ignore error if .env file doesn't exist
 
 	// Get RabbitMQ connection details from environment
 	rabbitHost := os.Getenv("RABBITMQ_HOST")
@@ -72,20 +87,42 @@ func NewConfig() (GlobalConfig, error) {
 		return GlobalConfig{}, fmt.Errorf("LOG_LEVEL environment variable is required")
 	}
 
-	// Get dataset service address from environment
-	datasetAddr := os.Getenv("DATASET_SERVICE_ADDR")
-	if datasetAddr == "" {
-		return GlobalConfig{}, fmt.Errorf("DATASET_SERVICE_ADDR environment variable is required")
+	// Get Pod name from Kubernetes Downward API (for consumer tag)
+	podName := os.Getenv("POD_NAME")
+	if podName == "" {
+		// Fallback for local development
+		podName = "local-dispatcher"
 	}
 
-	// Get batch size from environment
-	batchSizeStr := os.Getenv("BATCH_SIZE")
-	if batchSizeStr == "" {
-		return GlobalConfig{}, fmt.Errorf("BATCH_SIZE environment variable is required")
+	// Get PostgreSQL connection details from environment
+	dbHost := os.Getenv("POSTGRES_HOST")
+	if dbHost == "" {
+		// Default to localhost for Cloud SQL Proxy
+		dbHost = "127.0.0.1"
 	}
-	batchSize, err := strconv.ParseInt(batchSizeStr, 10, 32)
+
+	dbPortStr := os.Getenv("POSTGRES_PORT")
+	if dbPortStr == "" {
+		dbPortStr = "5432" // Default PostgreSQL port
+	}
+	dbPort, err := strconv.ParseInt(dbPortStr, 10, 32)
 	if err != nil {
-		return GlobalConfig{}, fmt.Errorf("BATCH_SIZE must be a valid integer: %w", err)
+		return GlobalConfig{}, fmt.Errorf("POSTGRES_PORT must be a valid integer: %w", err)
+	}
+
+	dbUser := os.Getenv("POSTGRES_USER")
+	if dbUser == "" {
+		return GlobalConfig{}, fmt.Errorf("POSTGRES_USER environment variable is required")
+	}
+
+	dbPass := os.Getenv("POSTGRES_PASS")
+	if dbPass == "" {
+		return GlobalConfig{}, fmt.Errorf("POSTGRES_PASS environment variable is required")
+	}
+
+	dbName := os.Getenv("POSTGRES_DB")
+	if dbName == "" {
+		return GlobalConfig{}, fmt.Errorf("POSTGRES_DB environment variable is required")
 	}
 
 	// Get max retries from environment (optional with default)
@@ -98,16 +135,20 @@ func NewConfig() (GlobalConfig, error) {
 		maxRetries = parsed
 	}
 
-	// Get container name from hostname (automatic detection)
-	containerName, err := os.Hostname()
-	if err != nil {
-		return GlobalConfig{}, fmt.Errorf("failed to get container hostname: %w", err)
+	// Get worker pool size from environment (optional with default)
+	workerPoolSize := 10
+	if poolSizeStr := os.Getenv("WORKER_POOL_SIZE"); poolSizeStr != "" {
+		parsed, err := strconv.Atoi(poolSizeStr)
+		if err != nil {
+			return GlobalConfig{}, fmt.Errorf("WORKER_POOL_SIZE must be a valid integer: %w", err)
+		}
+		workerPoolSize = parsed
 	}
 
 	return GlobalConfig{
-		logLevel:      logLevel,
-		serviceName:   "data-dispatcher-service",
-		containerName: containerName,
+		logLevel:       logLevel,
+		podName:        podName,
+		workerPoolSize: workerPoolSize,
 		middlewareConfig: &MiddlewareConfig{
 			host:       rabbitHost,
 			port:       int32(rabbitPort),
@@ -115,33 +156,35 @@ func NewConfig() (GlobalConfig, error) {
 			password:   rabbitPass,
 			maxRetries: maxRetries,
 		},
-		grpcConfig: &GrpcConfig{
-			datasetServiceAddr: datasetAddr,
-			batchSize:          int32(batchSize),
+		databaseConfig: &DatabaseConfig{
+			host:     dbHost,
+			port:     int32(dbPort),
+			user:     dbUser,
+			password: dbPass,
+			dbname:   dbName,
 		},
 	}, nil
 }
-
 
 // GlobalConfig getters
 func (c GlobalConfig) GetLogLevel() string {
 	return c.logLevel
 }
 
-func (c GlobalConfig) GetServiceName() string {
-	return c.serviceName
-}
-
-func (c GlobalConfig) GetContainerName() string {
-	return c.containerName
+func (c GlobalConfig) GetPodName() string {
+	return c.podName
 }
 
 func (c GlobalConfig) GetMiddlewareConfig() *MiddlewareConfig {
 	return c.middlewareConfig
 }
 
-func (c GlobalConfig) GetGrpcConfig() *GrpcConfig {
-	return c.grpcConfig
+func (c GlobalConfig) GetDatabaseConfig() *DatabaseConfig {
+	return c.databaseConfig
+}
+
+func (c GlobalConfig) GetWorkerPoolSize() int {
+	return c.workerPoolSize
 }
 
 // MiddlewareConfig getters
@@ -165,11 +208,23 @@ func (m MiddlewareConfig) GetMaxRetries() int {
 	return m.maxRetries
 }
 
-// GrpcConfig getters
-func (g GrpcConfig) GetDatasetServiceAddr() string {
-	return g.datasetServiceAddr
+// DatabaseConfig getters
+func (d DatabaseConfig) GetHost() string {
+	return d.host
 }
 
-func (g GrpcConfig) GetBatchSize() int32 {
-	return g.batchSize
+func (d DatabaseConfig) GetPort() int32 {
+	return d.port
+}
+
+func (d DatabaseConfig) GetUser() string {
+	return d.user
+}
+
+func (d DatabaseConfig) GetPassword() string {
+	return d.password
+}
+
+func (d DatabaseConfig) GetDBName() string {
+	return d.dbname
 }

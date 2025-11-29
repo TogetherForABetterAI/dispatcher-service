@@ -3,167 +3,248 @@ package server
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"github.com/mlops-eval/data-dispatcher-service/src/config"
-	"github.com/mlops-eval/data-dispatcher-service/src/grpc"
-	"github.com/mlops-eval/data-dispatcher-service/src/middleware"
-	"github.com/mlops-eval/data-dispatcher-service/src/models"
-	datasetpb "github.com/mlops-eval/data-dispatcher-service/src/pb"
+	"github.com/data-dispatcher-service/src/config"
+	"github.com/data-dispatcher-service/src/db"
+	"github.com/data-dispatcher-service/src/models"
+	"github.com/data-dispatcher-service/src/pb"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
 
-// BatchHandler manages publisher and gRPC client instances for batch processing
+// PublisherInterface defines the interface for publishing messages
+type PublisherInterface interface {
+	Publish(queueName string, body []byte, routingKey string) error
+}
+
+// BatchHandler manages fetching batches from DB and publishing to client queues
 type BatchHandler struct {
-	publisher  *middleware.Publisher
-	grpcClient *grpc.Client
-	logger     *logrus.Logger
-	modelType  string
-	batchSize  int32
+	publisher                    PublisherInterface
+	dbClient                     DBClient
+	logger                       *logrus.Logger
+	ctx                          context.Context
+	cancel                       context.CancelFunc
+	dispatcherToClientQueue      string
+	dispatcherToCalibrationQueue string
+	totalBatches                 int // Total batches generated for this session
 }
 
 // NewBatchHandler creates a new batch handler with initialized dependencies
-func NewBatchHandler(publisher *middleware.Publisher, grpcClient *grpc.Client, modelType string, batchSize int32, logger *logrus.Logger) *BatchHandler {
+func NewBatchHandler(publisher PublisherInterface, dbClient DBClient, logger *logrus.Logger, dispatcherToClientQueue, dispatcherToCalibrationQueue string) *BatchHandler {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &BatchHandler{
-		publisher:  publisher,
-		grpcClient: grpcClient,
-		logger:     logger,
-		modelType:  modelType,
-		batchSize:  batchSize,
+		publisher:                    publisher,
+		dbClient:                     dbClient,
+		logger:                       logger,
+		ctx:                          ctx,
+		cancel:                       cancel,
+		dispatcherToClientQueue:      dispatcherToClientQueue,
+		dispatcherToCalibrationQueue: dispatcherToCalibrationQueue,
+		totalBatches:                 0,
 	}
 }
 
-// Start initializes the batch handler and processes all batches for the client
-func (bh *BatchHandler) Start(ctx context.Context, notification *models.ConnectNotification) error {
+// Start processes all batches for a client session in chunks
+func (bh *BatchHandler) Start(notification *models.ConnectNotification) error {
+	// Store total batches for this session
+	bh.totalBatches = notification.TotalBatchesGenerated
+
 	bh.logger.WithFields(logrus.Fields{
-		"client_id":  notification.ClientId,
-		"model_type": notification.ModelType,
-		"batch_size": bh.batchSize,
-	}).Info("Starting batch handler and processing client data")
+		"user_id":          notification.UserID,
+		"session_id":       notification.SessionId,
+		"total_batches":    bh.totalBatches,
+		"dataset_exchange": config.DATASET_EXCHANGE,
+	}).Info("Starting batch handler for client session")
 
-	// Process all batches for this client
-	return bh.processBatches(ctx, notification)
-}
+	totalProcessed := 0
 
-// processBatches handles the main batch processing loop
-func (bh *BatchHandler) processBatches(ctx context.Context, notification *models.ConnectNotification) error {
-	batchIndex := int32(0)
-
+	// Loop until no more pending batches
 	for {
-
-		if ctx.Err() != nil {
-			return ctx.Err() // Context cancelled due to shutdown signal
+		select {
+		case <-bh.ctx.Done():
+			return bh.ctx.Err() // Context cancelled due to shutdown signal
+		default:
+			// Continue processing
 		}
 
-		// Fetch batch from dataset service using batch handler
-		batch, err := bh.FetchBatch(ctx, batchIndex)
-		if err != nil {
-			return fmt.Errorf("failed to fetch batch %d: %w", batchIndex, err)
-		}
+		// Calculate how many batches remain
+		batchesRemaining := bh.totalBatches - totalProcessed
 
-		// Publish the batch using batch handler
-		if err := bh.PublishBatch(notification, batch); err != nil {
-			return fmt.Errorf("failed to process batch %d: %w", batchIndex, err)
-		}
-
-		bh.logger.WithFields(logrus.Fields{
-			"client_id":     notification.ClientId,
-			"model_type":    notification.ModelType,
-			"batch_index":   batchIndex,
-			"is_last_batch": batch.GetIsLastBatch(),
-			"data_size":     len(batch.GetData()),
-		}).Info("Successfully published batch to both exchanges")
-
-		// Check if this was the last batch
-		if batch.GetIsLastBatch() {
+		if batchesRemaining <= 0 {
 			bh.logger.WithFields(logrus.Fields{
-				"client_id":     notification.ClientId,
-				"model_type":    notification.ModelType,
-				"total_batches": batchIndex + 1,
-			}).Info("Completed data processing for client")
+				"user_id":       notification.UserID,
+				"session_id":    notification.SessionId,
+				"total_batches": bh.totalBatches,
+			}).Info("All batches processed for client session")
+			break // All batches processed
+		}
+
+		// Get the next chunk of batches
+		batches, err := bh.dbClient.GetPendingBatchesLimit(
+			bh.ctx,
+			notification.SessionId,
+			min(config.BATCHES_TO_FETCH, batchesRemaining),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to get pending batches: %w", err)
+		}
+
+		// If no batches returned but we expected some, something is wrong
+		if len(batches) == 0 {
+			bh.logger.WithFields(logrus.Fields{
+				"user_id":            notification.UserID,
+				"session_id":         notification.SessionId,
+				"total_processed":    totalProcessed,
+				"expected_remaining": batchesRemaining,
+			}).Warn("No batches returned but expected more based on total_batches")
 			break
 		}
 
-		batchIndex++
+		// Determine if this is the last chunk
+		isLastChunk := (totalProcessed + len(batches)) >= bh.totalBatches
 
-		// Add small delay between batches to avoid overwhelming the services
-		if err := bh.waitBetweenBatches(ctx); err != nil {
-			return err
+		bh.logger.WithFields(logrus.Fields{
+			"session_id":        notification.SessionId,
+			"chunk_size":        len(batches),
+			"is_last_chunk":     isLastChunk,
+			"batches_processed": totalProcessed,
+			"batches_remaining": batchesRemaining,
+			"progress_percent":  float64(totalProcessed) / float64(bh.totalBatches) * 100,
+		}).Debug("Retrieved chunk of pending batches")
+
+		// Process this chunk
+		if err := bh.processBatchChunk(batches, notification, isLastChunk); err != nil {
+			return fmt.Errorf("failed to process batch chunk: %w", err)
+		}
+
+		totalProcessed += len(batches)
+
+		// If this was the last chunk, we're done
+		if isLastChunk {
+			break
 		}
 	}
 
 	return nil
 }
 
-// waitBetweenBatches adds a small delay between batch processing
-func (bh *BatchHandler) waitBetweenBatches(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(100 * time.Millisecond):
-		return nil
-	}
-}
+// processBatchChunk handles publishing and marking a chunk of batches
+func (bh *BatchHandler) processBatchChunk(batches []db.Batch, notification *models.ConnectNotification, isLastChunk bool) error {
+	sessionIDs := make([]string, 0, len(batches))
+	batchIndices := make([]int, 0, len(batches))
 
-// FetchBatch retrieves a single batch from the dataset service
-func (bh *BatchHandler) FetchBatch(ctx context.Context, batchIndex int32) (*datasetpb.DataBatchLabeled, error) {
-	batchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
+	// Publish all batches in the chunk
+	for i, batch := range batches {
+		select {
+		case <-bh.ctx.Done():
+			return bh.ctx.Err()
+		default:
+			// Continue processing
+		}
 
-	batchReq := &datasetpb.GetBatchRequest{
-		ModelType:  bh.modelType,
-		BatchSize:  bh.batchSize,
-		BatchIndex: batchIndex,
-	}
+		// Determine if this is the last batch of the entire session
+		// It's the last batch ONLY if:
+		// 1. This is the last chunk (isLastChunk == true) AND
+		// 2. This is the last item in this chunk (i == len(batches) - 1)
+		isLastBatch := isLastChunk && (i == len(batches)-1)
 
-	batch, err := bh.grpcClient.GetBatch(batchCtx, batchReq)
-	if err != nil {
+		// Publish the batch to both destinations
+		if err := bh.publishBatch(batch, notification.SessionId, isLastBatch); err != nil {
+			// If publish fails, don't mark any batch as enqueued
+			return fmt.Errorf("failed to publish batch index %d (position %d in chunk): %w", batch.BatchIndex, i, err)
+		}
+
+		sessionIDs = append(sessionIDs, batch.SessionID)
+		batchIndices = append(batchIndices, batch.BatchIndex)
+
 		bh.logger.WithFields(logrus.Fields{
-			"batch_index": batchIndex,
-			"error":       err.Error(),
-		}).Error("Failed to fetch batch from dataset service")
-		return nil, err
+			"user_id":       notification.UserID,
+			"session_id":    notification.SessionId,
+			"batch_index":   batch.BatchIndex,
+			"total_batches": bh.totalBatches,
+			"is_last_batch": isLastBatch,
+		}).Info("Batch published successfully")
 	}
 
-	return batch, nil
+	// Mark all batches in this chunk as enqueued in a single DB operation
+	if err := bh.dbClient.MarkBatchesAsEnqueued(bh.ctx, sessionIDs, batchIndices); err != nil {
+		bh.logger.WithError(err).WithFields(logrus.Fields{
+			"batch_count":   len(batchIndices),
+			"batch_indices": batchIndices,
+		}).Error("Failed to mark batches as enqueued, but messages were published. Idempotency will handle duplicates.")
+		// Don't return error - messages already published, idempotency will handle it
+	}
+
+	bh.logger.WithFields(logrus.Fields{
+		"user_id":       notification.UserID,
+		"session_id":    notification.SessionId,
+		"batch_count":   len(batches),
+		"total_batches": bh.totalBatches,
+		"is_last_chunk": isLastChunk,
+	}).Info("Successfully processed batch chunk")
+
+	return nil
 }
 
-// PublishBatch handles the transformation and publishing of a single batch
-func (bh *BatchHandler) PublishBatch(notification *models.ConnectNotification, batch *datasetpb.DataBatchLabeled) error {
-	// Prepare batches
-	unlabeledBatch, labeledBatch := bh.prepareBatches(batch)
+// publishBatch handles the transformation and publishing of a single batch to both destinations
+func (bh *BatchHandler) publishBatch(batch db.Batch, sessionID string, isLastBatch bool) error {
+	// Prepare both batch types (with and without labels)
+	unlabeledBatch, labeledBatch := bh.prepareBatches(
+		batch.DataPayload,
+		int32(batch.BatchIndex),
+		batch.Labels,
+		isLastBatch,
+		sessionID,
+	)
 
-	// Marshal batches
+	// Marshal batches to protobuf
 	unlabeledBody, labeledBody, err := bh.marshalBatches(unlabeledBatch, labeledBatch)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal batches: %w", err)
 	}
 
-	// Publish batches
-	return bh.publishBatches(notification.ClientId, unlabeledBody, labeledBody, batch.GetBatchIndex())
+	if err := bh.publisher.Publish(bh.dispatcherToClientQueue, unlabeledBody, ""); err != nil {
+		return fmt.Errorf("failed to publish unlabeled batch to client queue %s: %w", bh.dispatcherToClientQueue, err)
+	}
+
+	if err := bh.publisher.Publish(bh.dispatcherToCalibrationQueue, labeledBody, ""); err != nil {
+		return fmt.Errorf("failed to publish labeled batch to dataset exchange: %w", err)
+	}
+
+	bh.logger.WithFields(logrus.Fields{
+		"session_id":     sessionID,
+		"batch_index":    batch.BatchIndex,
+		"client_queue":   bh.dispatcherToClientQueue,
+		"internal_queue": bh.dispatcherToCalibrationQueue,
+		"is_last_batch":  isLastBatch,
+	}).Info("Batch published to both destinations")
+
+	return nil
 }
 
 // prepareBatches creates the unlabeled and labeled protobuf batches
-func (bh *BatchHandler) prepareBatches(batch *datasetpb.DataBatchLabeled) (*datasetpb.DataBatchUnlabeled, *datasetpb.DataBatchLabeled) {
-	unlabeledBatch := &datasetpb.DataBatchUnlabeled{
-		Data:        batch.GetData(),
-		BatchIndex:  batch.GetBatchIndex(),
-		IsLastBatch: batch.GetIsLastBatch(),
+func (bh *BatchHandler) prepareBatches(data []byte, batchIndex int32, labels []int32, isLastBatch bool, sessionID string) (*pb.DataBatchUnlabeled, *pb.DataBatchLabeled) {
+	unlabeledBatch := &pb.DataBatchUnlabeled{
+		Data:        data,
+		BatchIndex:  batchIndex,
+		IsLastBatch: isLastBatch,
+		SessionId:   sessionID,
 	}
 
-	labeledBatch := &datasetpb.DataBatchLabeled{
-		Data:        batch.GetData(),
-		BatchIndex:  batch.GetBatchIndex(),
-		IsLastBatch: batch.GetIsLastBatch(),
-		Labels:      batch.GetLabels(),
+	labeledBatch := &pb.DataBatchLabeled{
+		Data:        data,
+		BatchIndex:  batchIndex,
+		IsLastBatch: isLastBatch,
+		Labels:      labels,
+		SessionId:   sessionID,
 	}
 
 	return unlabeledBatch, labeledBatch
 }
 
 // marshalBatches serializes the batches to protobuf
-func (bh *BatchHandler) marshalBatches(unlabeledBatch *datasetpb.DataBatchUnlabeled, labeledBatch *datasetpb.DataBatchLabeled) ([]byte, []byte, error) {
+func (bh *BatchHandler) marshalBatches(unlabeledBatch *pb.DataBatchUnlabeled, labeledBatch *pb.DataBatchLabeled) ([]byte, []byte, error) {
 	unlabeledBody, err := proto.Marshal(unlabeledBatch)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to marshal unlabeled batch: %w", err)
@@ -177,21 +258,8 @@ func (bh *BatchHandler) marshalBatches(unlabeledBatch *datasetpb.DataBatchUnlabe
 	return unlabeledBody, labeledBody, nil
 }
 
-// publishBatches publishes both unlabeled and labeled batches to RabbitMQ
-func (bh *BatchHandler) publishBatches(clientID string, unlabeledBody, labeledBody []byte, batchIndex int32) error {
-	routingKeys := []struct {
-		key  string
-		body []byte
-	}{
-		{fmt.Sprintf("%s.unlabeled", clientID), unlabeledBody},
-		{fmt.Sprintf("%s.labeled", clientID), labeledBody},
-	}
-
-	for _, rk := range routingKeys {
-		if err := bh.publisher.Publish(rk.key, rk.body, config.DATASET_EXCHANGE); err != nil {
-			return fmt.Errorf("failed to publish batch with routing key %s: %w", rk.key, err)
-		}
-	}
-
-	return nil
+// Stop cancels the batch handler's context
+func (bh *BatchHandler) Stop() {
+	bh.cancel()
+	bh.logger.Info("BatchHandler stopped")
 }
