@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/data-dispatcher-service/src/config"
-	"github.com/data-dispatcher-service/src/middleware"
-	"github.com/data-dispatcher-service/src/models"
+	"github.com/dispatcher-service/src/config"
+	"github.com/dispatcher-service/src/middleware"
+	"github.com/dispatcher-service/src/models"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sirupsen/logrus"
 )

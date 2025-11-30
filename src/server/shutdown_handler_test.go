@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/data-dispatcher-service/src/mocks"
+	"github.com/dispatcher-service/src/mocks"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

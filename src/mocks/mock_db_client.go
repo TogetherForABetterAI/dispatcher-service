@@ -3,7 +3,7 @@ package mocks
 import (
 	"context"
 
-	"github.com/data-dispatcher-service/src/db"
+	"github.com/dispatcher-service/src/db"
 	"github.com/stretchr/testify/mock"
 )
 

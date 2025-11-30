@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/data-dispatcher-service/src/config"
-	"github.com/data-dispatcher-service/src/db"
-	"github.com/data-dispatcher-service/src/models"
-	"github.com/data-dispatcher-service/src/pb"
+	"github.com/dispatcher-service/src/config"
+	"github.com/dispatcher-service/src/db"
+	"github.com/dispatcher-service/src/models"
+	"github.com/dispatcher-service/src/pb"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )

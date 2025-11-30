@@ -1,7 +1,7 @@
 package mocks
 
 import (
-	"github.com/data-dispatcher-service/src/models"
+	"github.com/dispatcher-service/src/models"
 	"github.com/stretchr/testify/mock"
 )
 

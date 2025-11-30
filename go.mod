@@ -1,4 +1,4 @@
-module github.com/data-dispatcher-service
+module github.com/dispatcher-service
 
 go 1.23.0
 

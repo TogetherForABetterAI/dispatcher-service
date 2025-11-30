@@ -6,9 +6,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/data-dispatcher-service/src/config"
-	"github.com/data-dispatcher-service/src/db"
-	"github.com/data-dispatcher-service/src/middleware"
+	"github.com/dispatcher-service/src/config"
+	"github.com/dispatcher-service/src/db"
+	"github.com/dispatcher-service/src/middleware"
 	"github.com/sirupsen/logrus"
 )
 

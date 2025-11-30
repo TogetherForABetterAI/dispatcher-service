@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/data-dispatcher-service/src/db"
-	"github.com/data-dispatcher-service/src/mocks"
-	"github.com/data-dispatcher-service/src/models"
+	"github.com/dispatcher-service/src/db"
+	"github.com/dispatcher-service/src/mocks"
+	"github.com/dispatcher-service/src/models"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

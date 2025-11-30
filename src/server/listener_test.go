@@ -3,9 +3,9 @@ package server
 import (
 	"testing"
 
-	"github.com/data-dispatcher-service/src/config"
-	"github.com/data-dispatcher-service/src/middleware"
-	"github.com/data-dispatcher-service/src/mocks"
+	"github.com/dispatcher-service/src/config"
+	"github.com/dispatcher-service/src/middleware"
+	"github.com/dispatcher-service/src/mocks"
 	"github.com/stretchr/testify/assert"
 )
 

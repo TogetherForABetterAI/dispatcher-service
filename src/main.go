@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/data-dispatcher-service/src/config"
-	"github.com/data-dispatcher-service/src/server"
 	"log"
 	"log/slog"
 	"os"
+
+	"github.com/dispatcher-service/src/config"
+	"github.com/dispatcher-service/src/server"
 )
 
 func loadConfig() config.GlobalConfig {

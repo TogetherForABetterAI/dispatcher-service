@@ -1,7 +1,7 @@
 services:
-  data-dispatcher-service:
+  dispatcher-service:
     build: .
-    container_name: data-dispatcher-service
+    container_name: dispatcher-service
     env_file: .env
     volumes:
       - ./src/pb:/app/src/pb

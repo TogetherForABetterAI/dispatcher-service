@@ -7,11 +7,12 @@
 package pb
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -184,7 +185,7 @@ const file_data_batch_proto_rawDesc = "" +
 	"batchIndex\x12\"\n" +
 	"\ris_last_batch\x18\x03 \x01(\bR\visLastBatch\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x04 \x01(\tR\tsessionIdB+Z)github.com/data-dispatcher-service/src/pbb\x06proto3"
+	"session_id\x18\x04 \x01(\tR\tsessionIdB+Z)github.com/dispatcher-service/src/pbb\x06proto3"
 
 var (
 	file_data_batch_proto_rawDescOnce sync.Once

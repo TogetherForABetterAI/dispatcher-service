@@ -1,7 +1,7 @@
 package mocks
 
 import (
-	"github.com/data-dispatcher-service/src/config"
+	"github.com/dispatcher-service/src/config"
 )
 
 // MockConfig is a simple implementation of config.Interface for testing
