@@ -132,7 +132,7 @@ func (m *Middleware) Connect() error {
 			"host": m.MiddlewareConfig.GetHost(),
 			"port": m.MiddlewareConfig.GetPort(),
 			"user": m.MiddlewareConfig.GetUsername(),
-		}).Info("Successfully reconnected to RabbitMQ")
+		}).Info("Successfully connected to RabbitMQ")
 
 		return nil
 	}
